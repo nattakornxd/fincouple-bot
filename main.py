@@ -1,5 +1,5 @@
 """
-FinCouple AI — LINE Bot Webhook Backend
+FinCouple AI -- LINE Bot Webhook Backend
 Phase 3: /create, /join, set_budget, ask_summary
 
 Author : FinCouple Team
@@ -35,24 +35,15 @@ from linebot.v3.messaging import (
 from linebot.v3.webhooks import MessageEvent, TextMessageContent
 from supabase import Client, create_client
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Environment Variables
-# ---------------------------------------------------------------------------
 LINE_CHANNEL_SECRET: str = os.environ["LINE_CHANNEL_SECRET"]
 LINE_CHANNEL_ACCESS_TOKEN: str = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 CLAUDE_API_KEY: str = os.environ["CLAUDE_API_KEY"]
 SUPABASE_URL: str = os.environ["SUPABASE_URL"]
 SUPABASE_KEY: str = os.environ["SUPABASE_KEY"]
 
-# ---------------------------------------------------------------------------
-# System Prompt for Claude
-# ---------------------------------------------------------------------------
 FINCOUPLE_SYSTEM_PROMPT = """
 # Role
 You are "FinCouple AI", an expert personal and couple finance assistant chatbot backend.
@@ -63,61 +54,56 @@ and output it EXCLUSIVELY in a structured JSON format.
 - The application allows couples to manage shared budgets split into multiple categories.
 - Every transaction belongs to a specific group (couple).
 - Users will either:
-  1. Record an Expense (รายจ่าย)
-  2. Record an Income (รายรับ)
-  3. Set/Update a Budget for a category (ตั้งงบประมาณ)
-  4. Ask for a summary or financial status (ดูสรุป/สอบถาม)
+  1. Record an Expense
+  2. Record an Income
+  3. Set/Update a Budget for a category
+  4. Ask for a summary or financial status
 
 # Category Guidelines
-Map the user's intent to one of these standard categories:
-- food (อาหารและเครื่องดื่ม)
-- travel (เดินทาง, ค่าน้ำมัน, ค่ารถ)
-- home (ที่อยู่อาศัย, ค่าน้ำ, ค่าไฟ, ค่าเน็ต, ของใช้ในบ้าน)
-- shopping (ช้อปปิ้ง, เสื้อผ้า, ของฟุ่มเฟือย)
-- entertainment (บันเทิง, ดูหนัง, ท่องเที่ยว, ปาร์ตี้)
-- savings (เงินออม, ลงทุน)
-- income (รายรับ เช่น เงินเดือน, โบนัส, ขายของ)
-- other (อื่นๆ)
+- food
+- travel
+- home
+- shopping
+- entertainment
+- savings
+- income
+- other
 
 # Output Format
 You must return ONLY a valid JSON object. No prose, no markdown.
 
-## JSON Schema:
 {
   "intent": "record_expense" | "record_income" | "set_budget" | "ask_summary" | "unknown",
   "data": {
     "amount": float or null,
     "category": "food"|"travel"|"home"|"shopping"|"entertainment"|"savings"|"income"|"other"|null,
-    "memo": "string description" or null,
+    "memo": "string" or null,
     "target_period": "current_month"|"weekly"|"monthly" or null
   },
-  "confidence": float (0.0 to 1.0),
-  "error_message": "string if data is missing or ambiguous, otherwise null"
+  "confidence": float,
+  "error_message": "string or null"
 }
 
 # Examples
-User: "กินส้มตำกับแฟนไป 450 บาท"
-Output: {"intent":"record_expense","data":{"amount":450.00,"category":"food","memo":"กินส้มตำกับแฟน","target_period":null},"confidence":0.98,"error_message":null}
+User: "ginkhaow pai 450 baht"
+Output: {"intent":"record_expense","data":{"amount":450.00,"category":"food","memo":"ginkhaow","target_period":null},"confidence":0.98,"error_message":null}
 
-User: "เงินเดือนออกแล้วจ้า 35000"
-Output: {"intent":"record_income","data":{"amount":35000.00,"category":"income","memo":"เงินเดือน","target_period":null},"confidence":0.95,"error_message":null}
+User: "nguenduan ok 35000"
+Output: {"intent":"record_income","data":{"amount":35000.00,"category":"income","memo":"nguenduan","target_period":null},"confidence":0.95,"error_message":null}
 
-User: "ตั้งงบค่าอาหารเดือนนี้ 5000 บาท"
-Output: {"intent":"set_budget","data":{"amount":5000.00,"category":"food","memo":"งบค่าอาหาร","target_period":"monthly"},"confidence":0.95,"error_message":null}
+User: "tang ngop aharn duanni 5000 baht"
+Output: {"intent":"set_budget","data":{"amount":5000.00,"category":"food","memo":"ngop aharn","target_period":"monthly"},"confidence":0.95,"error_message":null}
 
-User: "ขอดูสรุปยอดเดือนนี้"
+User: "kor du srup yod duanni"
 Output: {"intent":"ask_summary","data":{"amount":null,"category":null,"memo":null,"target_period":"current_month"},"confidence":0.90,"error_message":null}
 
-User: "ซื้อของเข้าห้อง"
-Output: {"intent":"unknown","data":null,"confidence":0.30,"error_message":"Missing transaction amount. Please provide the cost."}
+User: "seu khong khao hong"
+Output: {"intent":"unknown","data":null,"confidence":0.30,"error_message":"Missing transaction amount."}
 
 # Strict Rule
-Never break character. Always return valid JSON only.
+Always return valid JSON only.
 """
 
-# ---------------------------------------------------------------------------
-# Clients
-# ---------------------------------------------------------------------------
 supabase: Client | None = None
 anthropic_client: anthropic.AsyncAnthropic | None = None
 line_parser: WebhookParser | None = None
@@ -134,15 +120,11 @@ async def lifespan(app: FastAPI):
     line_config = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
     logger.info("All clients initialised.")
     yield
-    logger.info("Shutting down FinCouple AI backend.")
+    logger.info("Shutting down.")
 
 
 app = FastAPI(title="FinCouple AI Webhook", version="3.0.0", lifespan=lifespan)
 
-
-# ===========================================================================
-# SUPABASE HELPERS -- Users
-# ===========================================================================
 
 async def get_user(line_user_id: str) -> dict[str, Any] | None:
     result = (
@@ -186,39 +168,26 @@ async def insert_transaction(
     return result.data[0]
 
 
-# ===========================================================================
-# SUPABASE HELPERS -- Groups
-# ===========================================================================
-
 def _generate_invite_code(length: int = 6) -> str:
-    """Generate a random uppercase alphanumeric invite code."""
     chars = string.ascii_uppercase + string.digits
-    # Remove ambiguous chars (0, O, I, 1)
     chars = chars.translate(str.maketrans("", "", "0O1I"))
     return "".join(random.choices(chars, k=length))
 
 
 async def create_group(line_user_id: str) -> dict[str, Any]:
-    """Create a new group, assign creator, return group row."""
     invite_code = _generate_invite_code()
-
     result = supabase.table("groups").insert({
         "invite_code": invite_code,
         "created_by": line_user_id,
     }).execute()
-
     group = result.data[0]
-
-    # Assign user to this group
     supabase.table("users").update(
         {"group_id": group["id"]}
     ).eq("line_user_id", line_user_id).execute()
-
     return group
 
 
 async def join_group(line_user_id: str, invite_code: str) -> dict[str, Any] | None:
-    """Find group by invite code and assign user. Returns group or None."""
     result = (
         supabase.table("groups")
         .select("*")
@@ -228,18 +197,12 @@ async def join_group(line_user_id: str, invite_code: str) -> dict[str, Any] | No
     )
     if not result.data:
         return None
-
     group = result.data
     supabase.table("users").update(
         {"group_id": group["id"]}
     ).eq("line_user_id", line_user_id).execute()
-
     return group
 
-
-# ===========================================================================
-# SUPABASE HELPERS -- Budgets
-# ===========================================================================
 
 async def upsert_budget(
     group_id: str,
@@ -247,7 +210,6 @@ async def upsert_budget(
     amount: float,
     period: str = "monthly",
 ) -> dict[str, Any]:
-    """Upsert a budget entry (update if exists, insert if not)."""
     result = supabase.table("budgets").upsert(
         {
             "group_id": group_id,
@@ -262,11 +224,9 @@ async def upsert_budget(
 
 
 async def get_monthly_summary(group_id: str) -> dict[str, Any]:
-    """Query current month transactions + budgets and return summary dict."""
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
 
-    # Transactions this month
     tx_result = (
         supabase.table("transactions")
         .select("type, amount, category")
@@ -274,8 +234,6 @@ async def get_monthly_summary(group_id: str) -> dict[str, Any]:
         .gte("created_at", month_start)
         .execute()
     )
-
-    # Monthly budgets
     budget_result = (
         supabase.table("budgets")
         .select("category, amount")
@@ -311,37 +269,27 @@ async def get_monthly_summary(group_id: str) -> dict[str, Any]:
     }
 
 
-# ===========================================================================
-# CLAUDE HELPER
-# ===========================================================================
-
 async def parse_with_claude(user_message: str) -> dict[str, Any]:
     response = await anthropic_client.messages.create(
-        model="claude-3-haiku-20240307",
+        model="claude-haiku-4-5-20251001",
         max_tokens=512,
         system=FINCOUPLE_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
     )
     raw_text: str = response.content[0].text.strip()
     logger.info("Claude raw: %s", raw_text)
-
     if raw_text.startswith("```"):
         raw_text = raw_text.split("```")[1]
         if raw_text.startswith("json"):
             raw_text = raw_text[4:]
-
     return json.loads(raw_text)
 
-
-# ===========================================================================
-# REPLY BUILDERS
-# ===========================================================================
 
 CATEGORY_EMOJI: dict[str, str] = {
     "food": "\U0001f35c",
     "travel": "\U0001f697",
     "home": "\U0001f3e0",
-    "shopping": "\U0001f6cd️",
+    "shopping": "\U0001f6cd",
     "entertainment": "\U0001f3ac",
     "savings": "\U0001f4b0",
     "income": "\U0001f4b5",
@@ -412,7 +360,7 @@ def build_summary_reply(summary: dict[str, Any]) -> str:
             if budget:
                 pct = (spent / budget) * 100
                 bar = "\U0001f534" if pct > 100 else "\U0001f7e1" if pct > 80 else "\U0001f7e2"
-                lines.append(f"  {bar}{emoji} {cat}: {spent:,.0f}/{budget:,.0f} บ ({pct:.0f}%)")
+                lines.append(f"  {bar}{emoji} {cat}: {spent:,.0f}/{budget:,.0f} ({pct:.0f}%)")
             else:
                 lines.append(f"  {emoji} {cat}: {spent:,.0f} บาท")
 
@@ -420,112 +368,79 @@ def build_summary_reply(summary: dict[str, Any]) -> str:
         unspent = {k: v for k, v in budgets.items() if k not in expense_by_cat}
         for cat, budget in unspent.items():
             emoji = CATEGORY_EMOJI.get(cat, "\U0001f4dd")
-            lines.append(f"  \U0001f7e2{emoji} {cat}: 0/{budget:,.0f} บ (0%)")
+            lines.append(f"  \U0001f7e2{emoji} {cat}: 0/{budget:,.0f} (0%)")
 
     return "\n".join(lines)
 
-
-# ===========================================================================
-# CORE EVENT HANDLER
-# ===========================================================================
 
 async def handle_text_event(event: MessageEvent) -> str:
     line_user_id: str = event.source.user_id
     user_text: str = event.message.text.strip()
     lower_text = user_text.lower()
 
-    # Ensure user exists in DB
     await upsert_user(line_user_id, display_name=line_user_id)
     user = await get_user(line_user_id)
     group_id: str | None = user.get("group_id") if user else None
 
-    # -----------------------------------------------------------------------
-    # COMMAND: /create
-    # -----------------------------------------------------------------------
     if lower_text == "/create":
         if group_id:
-            return (
-                "⚠️ คุณอยู่ในกลุ่มแล้วนะครับ\n"
-                "ไม่สามารถสร้างกลุ่มใหม่ได้ขณะอยู่ในกลุ่ม"
-            )
+            return "⚠️ คุณอยู่ในกลุ่มแล้วนะครับ"
         try:
             group = await create_group(line_user_id)
         except Exception as exc:
             logger.error("Create group error: %s", exc)
             return "⚠️ สร้างกลุ่มไม่สำเร็จ กรุณาลองใหม่นะครับ"
-
         code = group["invite_code"]
         return (
-            f"\U0001f389 สร้างกลุ่มสำเร็จแล้ว!\n"
+            f"\U0001f389 สร้างกลุ่มสำเร็จ!\n"
             f"━━━━━━━━━━━━━━\n"
             f"\U0001f511 รหัสเชิญ: {code}\n"
             f"━━━━━━━━━━━━━━\n"
-            f"\U0001f4e4 ส่งรหัสนี้ให้แฟน แล้วให้พิมพ์:\n"
-            f"/join {code}"
+            f"\U0001f4e4 ให้แฟนพิมพ์: /join {code}"
         )
 
-    # -----------------------------------------------------------------------
-    # COMMAND: /join <code>
-    # -----------------------------------------------------------------------
     if lower_text.startswith("/join"):
         parts = user_text.split()
         if len(parts) < 2:
-            return "❓ กรุณาระบุรหัสกลุ่มด้วยครับ\nตัวอย่าง: /join ABC123"
+            return "❓ กรุณาระบุรหัสกลุ่มด้วยครับ เช่น /join ABC123"
         if group_id:
             return "⚠️ คุณอยู่ในกลุ่มแล้วนะครับ"
-
         invite_code = parts[1].strip().upper()
         try:
             group = await join_group(line_user_id, invite_code)
         except Exception as exc:
             logger.error("Join group error: %s", exc)
             return "⚠️ เข้าร่วมกลุ่มไม่สำเร็จ กรุณาลองใหม่นะครับ"
-
         if not group:
-            return (
-                f"❌ ไม่พบรหัสกลุ่ม '{invite_code}'\n"
-                "กรุณาตรวจสอบรหัสอีกครั้งนะครับ"
-            )
-
+            return f"❌ ไม่พบรหัสกลุ่ม '{invite_code}' กรุณาตรวจสอบอีกครั้งครับ"
         return (
-            "\U0001f38a เข้าร่วมกลุ่มสำเร็จแล้ว!\n"
+            "\U0001f38a เข้าร่วมกลุ่มสำเร็จ!\n"
             "\U0001f46b ตอนนี้คุณและแฟนอยู่ในกลุ่มเดียวกันแล้ว\n"
             "\U0001f4ac เริ่มบันทึกรายรับ-รายจ่ายได้เลยครับ!"
         )
 
-    # -----------------------------------------------------------------------
-    # COMMAND: /help
-    # -----------------------------------------------------------------------
     if lower_text in ("/help", "/start"):
         return (
-            "\U0001f916 FinCouple AI -- คู่มือการใช้งาน\n"
+            "\U0001f916 FinCouple AI\n"
             "━━━━━━━━━━━━━━\n"
-            "\U0001f4cc คำสั่ง:\n"
-            "  /create -- สร้างกลุ่มใหม่\n"
-            "  /join <รหัส> -- เข้าร่วมกลุ่ม\n"
-            "  /help -- ดูคำสั่งทั้งหมด\n"
+            "/create - สร้างกลุ่มใหม่\n"
+            "/join <รหัส> - เข้าร่วมกลุ่ม\n"
+            "/help - ดูคำสั่ง\n"
             "━━━━━━━━━━━━━━\n"
-            "\U0001f4ac พิมพ์ตามธรรมชาติ เช่น:\n"
-            "  'กินข้าวไป 150 บาท'\n"
-            "  'เงินเดือนออก 30000'\n"
-            "  'ตั้งงบค่าอาหาร 5000 บาท'\n"
-            "  'ขอดูสรุปยอดเดือนนี้'"
+            "พิมพ์ตามธรรมชาติ เช่น\n"
+            "กินข้าวไป 150 บาท\n"
+            "เงินเดือนออก 30000\n"
+            "ตั้งงบค่าอาหาร 5000 บาท\n"
+            "ขอดูสรุปยอดเดือนนี้"
         )
 
-    # -----------------------------------------------------------------------
-    # Check group membership
-    # -----------------------------------------------------------------------
     if not group_id:
         return (
             "\U0001f44b สวัสดี! ยังไม่ได้อยู่ในกลุ่มนะครับ\n"
-            "━━━━━━━━━━━━━━\n"
-            "\U0001f4cc พิมพ์ /create เพื่อสร้างกลุ่มใหม่\n"
-            "\U0001f4cc พิมพ์ /join <รหัส> เพื่อเข้าร่วมกลุ่ม"
+            "พิมพ์ /create เพื่อสร้างกลุ่มใหม่\n"
+            "พิมพ์ /join <รหัส> เพื่อเข้าร่วมกลุ่ม"
         )
 
-    # -----------------------------------------------------------------------
-    # Parse with Claude AI
-    # -----------------------------------------------------------------------
     try:
         parsed = await parse_with_claude(user_text)
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
@@ -536,18 +451,13 @@ async def handle_text_event(event: MessageEvent) -> str:
     data: dict | None = parsed.get("data")
     error_msg: str | None = parsed.get("error_message")
 
-    # -----------------------------------------------------------------------
-    # INTENT: record_expense / record_income
-    # -----------------------------------------------------------------------
     if intent in ("record_expense", "record_income"):
         if not data or data.get("amount") is None:
-            return f"❓ {error_msg or 'ไม่พบยอดเงินในข้อความ กรุณาระบุจำนวนเงินด้วยครับ'}"
-
+            return f"❓ {error_msg or 'ไม่พบยอดเงิน กรุณาระบุจำนวนเงินด้วยครับ'}"
         amount: float = float(data["amount"])
         category: str = data.get("category") or "other"
         memo: str | None = data.get("memo")
         tx_type = "expense" if intent == "record_expense" else "income"
-
         try:
             await insert_transaction(
                 group_id=group_id,
@@ -560,56 +470,38 @@ async def handle_text_event(event: MessageEvent) -> str:
         except Exception as exc:
             logger.error("Supabase insert error: %s", exc)
             return "⚠️ บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้งนะครับ"
-
         return (
             build_expense_reply(amount, category, memo)
             if tx_type == "expense"
             else build_income_reply(amount, category, memo)
         )
 
-    # -----------------------------------------------------------------------
-    # INTENT: set_budget
-    # -----------------------------------------------------------------------
     elif intent == "set_budget":
         if not data or data.get("amount") is None:
             return f"❓ {error_msg or 'ไม่พบยอดงบประมาณ กรุณาระบุจำนวนเงินด้วยครับ'}"
-
         amount = float(data["amount"])
         category = data.get("category") or "other"
         period = data.get("target_period") or "monthly"
         if period not in ("monthly", "weekly"):
             period = "monthly"
-
         try:
             await upsert_budget(group_id, category, amount, period)
         except Exception as exc:
             logger.error("Budget upsert error: %s", exc)
             return "⚠️ บันทึกงบประมาณไม่สำเร็จ กรุณาลองใหม่อีกครั้งนะครับ"
-
         return build_budget_reply(amount, category, period)
 
-    # -----------------------------------------------------------------------
-    # INTENT: ask_summary
-    # -----------------------------------------------------------------------
     elif intent == "ask_summary":
         try:
             summary = await get_monthly_summary(group_id)
         except Exception as exc:
             logger.error("Summary error: %s", exc)
             return "⚠️ ดึงข้อมูลสรุปไม่ได้ กรุณาลองใหม่อีกครั้งนะครับ"
-
         return build_summary_reply(summary)
 
-    # -----------------------------------------------------------------------
-    # INTENT: unknown
-    # -----------------------------------------------------------------------
     else:
         return f"❓ {error_msg or 'ไม่เข้าใจข้อความ กรุณาลองพิมพ์ใหม่นะครับ'}"
 
-
-# ===========================================================================
-# FASTAPI ENDPOINTS
-# ===========================================================================
 
 @app.get("/health")
 async def health_check() -> JSONResponse:
@@ -622,7 +514,6 @@ async def webhook(
     x_line_signature: str = Header(alias="X-Line-Signature"),
 ) -> JSONResponse:
     body: bytes = await request.body()
-
     try:
         events = line_parser.parse(body.decode("utf-8"), x_line_signature)
     except InvalidSignatureError:
@@ -634,9 +525,7 @@ async def webhook(
             continue
         if not isinstance(event.message, TextMessageContent):
             continue
-
         reply_text = await handle_text_event(event)
-
         with ApiClient(line_config) as api_client:
             line_api = MessagingApi(api_client)
             line_api.reply_message(

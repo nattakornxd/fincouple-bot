@@ -1,6 +1,6 @@
 """
 FinCouple AI — LINE Bot Webhook Backend
-Phase 4: LIFF Dashboard API
+Phase 3: /create, /join, set_budget, ask_summary
 
 Author : FinCouple Team
 Python : 3.11+
@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI):
     logger.info("🛑 Shutting down FinCouple AI backend.")
 
 
-app = FastAPI(title="FinCouple AI Webhook", version="4.0.0", lifespan=lifespan)
+app = FastAPI(title="FinCouple AI Webhook", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -502,6 +502,19 @@ async def handle_text_event(event: MessageEvent) -> str:
             f"🎊 เข้าร่วมกลุ่มสำเร็จแล้ว!\n"
             f"👫 ตอนนี้คุณและแฟนอยู่ในกลุ่มเดียวกันแล้ว\n"
             f"💬 เริ่มบันทึกรายรับ-รายจ่ายได้เลยครับ!"
+        )
+
+    # -----------------------------------------------------------------------
+    # COMMAND: บันทึก — prompt ให้พิมพ์รายการ
+    # -----------------------------------------------------------------------
+    if lower_text == "บันทึก":
+        return (
+            "💬 พิมพ์รายการที่ต้องการบันทึกได้เลยครับ\n"
+            "━━━━━━━━━━━━━━\n"
+            "ตัวอย่าง:\n"
+            "  • กินข้าวไป 150 บาท\n"
+            "  • เงินเดือนออก 30000\n"
+            "  • ตั้งงบค่าอาหาร 5000 บาท"
         )
 
     # -----------------------------------------------------------------------

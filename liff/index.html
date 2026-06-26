@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinCouple AI — Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/@line/liff@2.22.3/dist/liff.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --pink: #FF6B9D;
+      --purple: #C44BC4;
+      --bg: #0F0F1A;
+      --card: #1A1A2E;
+      --text: #E0E0E0;
+      --muted: #888;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', 'Noto Sans Thai', sans-serif;
+      min-height: 100vh;
+    }
+
+    .header {
+      background: linear-gradient(135deg, var(--pink), var(--purple));
+      padding: 20px 16px 28px;
+      text-align: center;
+    }
+    .header h1 { font-size: 1.3rem; font-weight: 700; }
+    .header .month { font-size: 0.85rem; opacity: 0.85; margin-top: 4px; }
+    .avatar { width: 48px; height: 48px; border-radius: 50%; border: 2px solid white; margin: 0 auto 10px; display: block; }
+
+    .container { padding: 0 12px 24px; margin-top: -16px; }
+
+    .summary-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .summary-card {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 12px 8px;
+      text-align: center;
+    }
+    .summary-card .label { font-size: 0.68rem; color: var(--muted); margin-bottom: 4px; }
+    .summary-card .value { font-size: 1rem; font-weight: 700; }
+    .summary-card .value.income { color: #4ADE80; }
+    .summary-card .value.expense { color: #F87171; }
+    .summary-card .value.balance-pos { color: #60A5FA; }
+    .summary-card .value.balance-neg { color: #F87171; }
+
+    .section { background: var(--card); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
+    .section-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 14px; color: var(--pink); }
+
+    .chart-wrap { position: relative; width: 180px; height: 180px; margin: 0 auto 12px; }
+
+    .budget-item { margin-bottom: 12px; }
+    .budget-header { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 5px; }
+    .budget-header .amounts { color: var(--muted); }
+    .bar-bg { background: #2a2a40; border-radius: 99px; height: 8px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 99px; transition: width 0.6s ease; }
+    .bar-fill.green { background: linear-gradient(90deg, #4ADE80, #22C55E); }
+    .bar-fill.yellow { background: linear-gradient(90deg, #FCD34D, #F59E0B); }
+    .bar-fill.red { background: linear-gradient(90deg, #F87171, #EF4444); }
+
+    .tx-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #2a2a40; }
+    .tx-item:last-child { border-bottom: none; }
+    .tx-emoji { width: 36px; height: 36px; border-radius: 10px; background: #2a2a40; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0; }
+    .tx-info { flex: 1; min-width: 0; }
+    .tx-memo { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tx-cat { font-size: 0.72rem; color: var(--muted); margin-top: 2px; }
+    .tx-amount { font-size: 0.95rem; font-weight: 700; flex-shrink: 0; }
+    .tx-amount.expense { color: #F87171; }
+    .tx-amount.income { color: #4ADE80; }
+
+    .loading { text-align: center; padding: 60px 20px; color: var(--muted); }
+    .loading .spinner { width: 36px; height: 36px; border: 3px solid #333; border-top-color: var(--pink); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-box { background: #2a1a1a; border: 1px solid #F87171; border-radius: 14px; padding: 20px; text-align: center; color: #F87171; margin: 20px 0; }
+    .empty { text-align: center; color: var(--muted); padding: 20px 0; font-size: 0.85rem; }
+
+    .no-group { text-align: center; padding: 40px 20px; }
+    .no-group .emoji { font-size: 3rem; margin-bottom: 16px; }
+    .no-group h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .no-group p { color: var(--muted); font-size: 0.85rem; line-height: 1.6; }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <div class="loading">
+    <div class="spinner"></div>
+    <p>กำลังโหลด...</p>
+  </div>
+</div>
+
+<script>
+const LIFF_ID = "YOUR_LIFF_ID";
+const API_BASE = "https://fincouple-bot-production.up.railway.app";
+
+const CAT_EMOJI = {
+  food: "🍜", travel: "🚗", home: "🏠", shopping: "🛍️",
+  entertainment: "🎬", savings: "💰", income: "💵", other: "📝"
+};
+const CAT_COLOR = {
+  food: "#FF6B9D", travel: "#60A5FA", home: "#A78BFA", shopping: "#FCD34D",
+  entertainment: "#F97316", savings: "#4ADE80", income: "34D399", other: "#9CA3AF"
+};
+
+function fmt(n) { return Number(n).toLocaleString("th-TH", { maximumFractionDigits: 0 }); }
+
+function renderDashboard(profile, data) {
+  const balanceClass = data.balance >= 0 ? "balance-pos" : "balance-neg";
+  const balanceSign = data.balance >= 0 ? "+" : "";
+
+  const cats = Object.entries(data.expense_by_category || {}).sort((a, b) => b[1] - a[1]);
+  const chartLabels = cats.map(([k]) => `${CAT_EMOJI[k] || "📝"} ${k}`);
+  const chartData = cats.map(([, v]) => v);
+  const chartColors = cats.map(([k]) => CAT_COLOR[k] || "#9CA3AF");
+
+  const budgets = data.budgets || {};
+  const allCats = new Set([...Object.keys(data.expense_by_category || {}), ...Object.keys(budgets)]);
+  const budgetHTML = [...allCats].filter(c => budgets[c]).map(cat => {
+    const spent = data.expense_by_category?.[cat] || 0;
+    const budget = budgets[cat] || 0;
+    const pct = budget > 0 ? Math.min((spent / budget) * 100, 100) : 0;
+    const cls = pct >= 100 ? "red" : pct >= 80 ? "yellow" : "green";
+    return `
+      <div class="budget-item">
+        <div class="budget-header">
+          <span class="cat">${CAT_EMOJI[cat] || "📝"} ${cat}</span>
+          <span class="amounts">${fmt(spent)} / ${fmt(budget)} บ</span>
+        </div>
+        <div class="bar-bg"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
+      </div>`;
+  }).join("") || '<div class="empty">ยังไม่มีงบประมาณ ตั้งงบได้ใน LINE เลยนะ 💡</div>';
+
+  const txHTML = (data.recent_transactions || []).slice(0, 10).map(tx => {
+    const isExp = tx.type === "expense";
+    const emoji = CAT_EMOJI[tx.category] || "📝";
+    const sign = isExp ? "-" : "+";
+    const cls = isExp ? "expense" : "income";
+    const memo = tx.memo || tx.category || "-";
+    return `
+      <div class="tx-item">
+        <div class="tx-emoji">${emoji}</div>
+        <div class="tx-info">
+          <div class="tx-memo">${memo}</div>
+          <div class="tx-cat">${tx.category || "other"}</div>
+        </div>
+        <div class="tx-amount ${cls}">${sign}${fmt(tx.amount)}</div>
+      </div>`;
+  }).join("") || '<div class="empty">ยังไม่มีรายการ 🎉</div>';
+
+  document.getElementById("app").innerHTML = `
+    <div class="header">
+      ${profile.pictureUrl ? `<img class="avatar" src="${profile.pictureUrl}" />` : ""}
+      <h1>💕 FinCouple AI</h1>
+      <div class="month">${data.month}</div>
+    </div>
+    <div class="container">
+      <div class="summary-row">
+        <div class="summary-card">
+          <div class="label">รายรับ</div>
+          <div class="value income">+${fmt(data.total_income)}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">รายจ่าย</div>
+          <div class="value expense">-${fmt(data.total_expense)}</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">คงเหลือ</div>
+          <div class="value ${balanceClass}">${balanceSign}${fmt(data.balance)}</div>
+        </div>
+      </div>
+      ${cats.length > 0 ? `
+      <div class="section">
+        <div class="section-title">📊 รายจ่ายแต่ละหมวด</div>
+        <div class="chart-wrap"><canvas id="pieChart"></canvas></div>
+      </div>` : ""}
+      <div class="section">
+        <div class="section-title">🎯 งบประมาณ</div>
+        ${budgetHTML}
+      </div>
+      <div class="section">
+        <div class="section-title">🕐 รายการล่าสุด</div>
+        ${txHTML}
+      </div>
+    </div>
+  `;
+
+  if (cats.length > 0) {
+    new Chart(document.getElementById("pieChart"), {
+      type: "doughnut",
+      data: { labels: chartLabels, datasets: [{ data: chartData, backgroundColor: chartColors, borderWidth: 0, hoverOffset: 8 }] },
+      options: {
+        cutout: "65%",
+        plugins: {
+          legend: { position: "bottom", labels: { color: "#ccc", font: { size: 11 }, padding: 10, boxWidth: 12 } }
+        }
+      }
+    });
+  }
+}
+
+function renderNoGroup(profile) {
+  document.getElementById("app").innerHTML = `
+    <div class="header">
+      ${profile.pictureUrl ? `<img class="avatar" src="${profile.pictureUrl}" />` : ""}
+      <h1>💕 FinCouple AI</h1>
+    </div>
+    <div class="container">
+      <div class="no-group">
+        <div class="emoji">👫</div>
+        <h2>ยังไม่ได้เชื่อมกลุ่ม</h2>
+        <p>กลับไปแชทกับบอทใน LINE<br>แล้วพิมพ์ <strong>/create</strong> เพื่อสร้างกลุ่ม<br>หรือ <strong>/join &lt;รหัส&gt;</strong> เพื่อเข้าร่วม</p>
+      </div>
+    </div>`;
+}
+
+function renderError(msg) {
+  document.getElementById("app").innerHTML = `
+    <div class="header"><h1>💕 FinCouple AI</h1></div>
+    <div class="container"><div class="error-box">⚠️ ${msg}</div></div>`;
+}
+
+async function main() {
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) { liff.login(); return; }
+    const profile = await liff.getProfile();
+    const res = await fetch(`${API_BASE}/api/summary?line_user_id=${encodeURIComponent(profile.userId)}`);
+    if (res.status === 404) { renderNoGroup(profile); return; }
+    if (!res.ok) throw new Error(`API error ${res.status}`);
+    renderDashboard(profile, await res.json());
+  } catch (err) {
+    console.error(err);
+    renderError(err.message || "เกิดข้อผิดพลาด กรุณาลองใหม่");
+  }
+}
+
+main();
+</script>
+</body>
+</html>

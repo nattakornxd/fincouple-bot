@@ -12,8 +12,12 @@
     :root {
       --pink: #FF6B9D;
       --purple: #C44BC4;
+      --green: #4CAF50;
+      --red: #F44336;
+      --yellow: #FFC107;
       --bg: #0F0F1A;
       --card: #1A1A2E;
+      --card2: #16213E;
       --text: #E0E0E0;
       --muted: #888;
     }
@@ -25,15 +29,18 @@
       min-height: 100vh;
     }
 
+    /* Header */
     .header {
       background: linear-gradient(135deg, var(--pink), var(--purple));
       padding: 20px 16px 28px;
       text-align: center;
+      position: relative;
     }
-    .header h1 { font-size: 1.3rem; font-weight: 700; }
+    .header h1 { font-size: 1.3rem; font-weight: 700; letter-spacing: 0.5px; }
     .header .month { font-size: 0.85rem; opacity: 0.85; margin-top: 4px; }
     .avatar { width: 48px; height: 48px; border-radius: 50%; border: 2px solid white; margin: 0 auto 10px; display: block; }
 
+    /* Cards */
     .container { padding: 0 12px 24px; margin-top: -16px; }
 
     .summary-row {
@@ -56,12 +63,15 @@
     .summary-card .value.balance-neg { color: #F87171; }
 
     .section { background: var(--card); border-radius: 16px; padding: 16px; margin-bottom: 14px; }
-    .section-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 14px; color: var(--pink); }
+    .section-title { font-size: 0.9rem; font-weight: 600; margin-bottom: 14px; color: var(--pink); display: flex; align-items: center; gap: 6px; }
 
+    /* Pie chart */
     .chart-wrap { position: relative; width: 180px; height: 180px; margin: 0 auto 12px; }
 
+    /* Budget bars */
     .budget-item { margin-bottom: 12px; }
     .budget-header { display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 5px; }
+    .budget-header .cat { color: var(--text); }
     .budget-header .amounts { color: var(--muted); }
     .bar-bg { background: #2a2a40; border-radius: 99px; height: 8px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 99px; transition: width 0.6s ease; }
@@ -69,6 +79,7 @@
     .bar-fill.yellow { background: linear-gradient(90deg, #FCD34D, #F59E0B); }
     .bar-fill.red { background: linear-gradient(90deg, #F87171, #EF4444); }
 
+    /* Transactions */
     .tx-item { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid #2a2a40; }
     .tx-item:last-child { border-bottom: none; }
     .tx-emoji { width: 36px; height: 36px; border-radius: 10px; background: #2a2a40; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; flex-shrink: 0; }
@@ -79,13 +90,15 @@
     .tx-amount.expense { color: #F87171; }
     .tx-amount.income { color: #4ADE80; }
 
+    /* Loading / Error */
     .loading { text-align: center; padding: 60px 20px; color: var(--muted); }
     .loading .spinner { width: 36px; height: 36px; border: 3px solid #333; border-top-color: var(--pink); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
     .error-box { background: #2a1a1a; border: 1px solid #F87171; border-radius: 14px; padding: 20px; text-align: center; color: #F87171; margin: 20px 0; }
+
     .empty { text-align: center; color: var(--muted); padding: 20px 0; font-size: 0.85rem; }
 
+    /* No group state */
     .no-group { text-align: center; padding: 40px 20px; }
     .no-group .emoji { font-size: 3rem; margin-bottom: 16px; }
     .no-group h2 { font-size: 1.1rem; margin-bottom: 8px; }
@@ -102,16 +115,22 @@
 </div>
 
 <script>
-const LIFF_ID = "YOUR_LIFF_ID";
+// ============================================================
+// CONFIG
+// ============================================================
+const LIFF_ID = "2010520479-6TrRjatU";
 const API_BASE = "https://fincouple-bot-production.up.railway.app";
 
+// ============================================================
+// Category helpers
+// ============================================================
 const CAT_EMOJI = {
   food: "🍜", travel: "🚗", home: "🏠", shopping: "🛍️",
   entertainment: "🎬", savings: "💰", income: "💵", other: "📝"
 };
 const CAT_COLOR = {
   food: "#FF6B9D", travel: "#60A5FA", home: "#A78BFA", shopping: "#FCD34D",
-  entertainment: "#F97316", savings: "#4ADE80", income: "34D399", other: "#9CA3AF"
+  entertainment: "#F97316", savings: "#4ADE80", income: "#34D399", other: "#9CA3AF"
 };
 
 function fmt(n) { return Number(n).toLocaleString("th-TH", { maximumFractionDigits: 0 }); }
@@ -140,7 +159,7 @@ function renderDashboard(profile, data) {
         </div>
         <div class="bar-bg"><div class="bar-fill ${cls}" style="width:${pct}%"></div></div>
       </div>`;
-  }).join("") || '<div class="empty">ยังไม่มีงบประมาณ ตั้งงบได้ใน LINE เลยนะ 💡</div>';
+  }).join("") || '<div class="empty">ยังไม่มีงบประมาณ<br>ตั้งงบได้ใน LINE เลยนะ 💡</div>';
 
   const txHTML = (data.recent_transactions || []).slice(0, 10).map(tx => {
     const isExp = tx.type === "expense";
@@ -236,10 +255,12 @@ async function main() {
     await liff.init({ liffId: LIFF_ID });
     if (!liff.isLoggedIn()) { liff.login(); return; }
     const profile = await liff.getProfile();
-    const res = await fetch(`${API_BASE}/api/summary?line_user_id=${encodeURIComponent(profile.userId)}`);
+    const lineUserId = profile.userId;
+    const res = await fetch(`${API_BASE}/api/summary?line_user_id=${encodeURIComponent(lineUserId)}`);
     if (res.status === 404) { renderNoGroup(profile); return; }
     if (!res.ok) throw new Error(`API error ${res.status}`);
-    renderDashboard(profile, await res.json());
+    const data = await res.json();
+    renderDashboard(profile, data);
   } catch (err) {
     console.error(err);
     renderError(err.message || "เกิดข้อผิดพลาด กรุณาลองใหม่");

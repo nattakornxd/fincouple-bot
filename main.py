@@ -810,12 +810,7 @@ def build_summary_flex(summary: dict[str, Any]) -> dict:
     contents = {
         "type": "bubble",
         "size": "giga",
-        "background": {
-            "type": "linearGradient",
-            "angle": "160deg",
-            "startColor": _C_BG_PRIMARY,
-            "endColor": _C_BG_SECONDARY,
-        },
+
         "body": {
             "type": "box",
             "layout": "vertical",
@@ -1139,49 +1134,49 @@ async def webhook(
         if not isinstance(event.message, TextMessageContent):
             continue
 
-        reply = await handle_text_event(event)
+        try:
+            reply = await handle_text_event(event)
+        except Exception as exc:
+            logger.error("handle_text_event error: %s", exc, exc_info=True)
+            reply = "⚠️ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้งนะครับ"
 
-        # dict → Flex Message (ส่งตรงผ่าน LINE API เพื่อหลีกเลี่ยง SDK type validation)
-        # str  → Text Message (ผ่าน SDK ตามปกติ)
+        # dict → Flex Message via raw httpx
+        # str  → Text Message via SDK
         if isinstance(reply, dict):
-            async with httpx.AsyncClient() as http:
-                r = await http.post(
-                    "https://api.line.me/v2/bot/message/reply",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-                    },
-                    json={
-                        "replyToken": event.reply_token,
-                        "messages": [{
-                            "type": "flex",
-                            "altText": reply["alt_text"],
-                            "contents": reply["contents"],
-                        }],
-                    },
-                    timeout=15.0,
-                )
-                if not r.is_success:
-                    # LINE rejected the Flex — log and fall back to text
-                    logger.error("LINE Flex API error %s: %s", r.status_code, r.text)
-                    out_msg = TextMessage(text=reply["alt_text"])
-                    with ApiClient(line_config) as api_client:
-                        line_api = MessagingApi(api_client)
-                        line_api.reply_message(
-                            ReplyMessageRequest(
-                                reply_token=event.reply_token,
-                                messages=[out_msg],
-                            )
-                        )
-        else:
-            out_msg = TextMessage(text=str(reply))
-            with ApiClient(line_config) as api_client:
-                line_api = MessagingApi(api_client)
-                line_api.reply_message(
-                    ReplyMessageRequest(
-                        reply_token=event.reply_token,
-                        messages=[out_msg],
+            try:
+                async with httpx.AsyncClient() as http:
+                    r = await http.post(
+                        "https://api.line.me/v2/bot/message/reply",
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                        },
+                        json={
+                            "replyToken": event.reply_token,
+                            "messages": [{
+                                "type": "flex",
+                                "altText": reply["alt_text"],
+                                "contents": reply["contents"],
+                            }],
+                        },
+                        timeout=15.0,
                     )
-                )
+                if not r.is_success:
+                    logger.error("LINE Flex API error %s: %s", r.status_code, r.text)
+            except Exception as exc:
+                logger.error("Flex send error: %s", exc)
+        else:
+            try:
+                out_msg = TextMessage(text=str(reply))
+                with ApiClient(line_config) as api_client:
+                    line_api = MessagingApi(api_client)
+                    line_api.reply_message(
+                        ReplyMessageRequest(
+                            reply_token=event.reply_token,
+                            messages=[out_msg],
+                        )
+                    )
+            except Exception as exc:
+                logger.error("Text send error: %s", exc)
 
     return JSONResponse({"status": "ok"})

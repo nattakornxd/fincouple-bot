@@ -1109,8 +1109,7 @@ LIFF_HTML = """
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FinCouple AI — Dashboard</title>
-  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Scripts loaded dynamically -->
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1331,7 +1330,7 @@ function renderDashboard(profile, data) {
   `;
 
   // Draw pie chart
-  if (cats.length > 0) {
+  if (cats.length > 0 && typeof Chart !== "undefined") {
     new Chart(document.getElementById("pieChart"), {
       type: "doughnut",
       data: { labels: chartLabels, datasets: [{ data: chartData, backgroundColor: chartColors, borderWidth: 0, hoverOffset: 8 }] },
@@ -1369,11 +1368,37 @@ function renderError(msg) {
 // ============================================================
 // Main
 // ============================================================
+// ── Dynamic script loader ─────────────────────────
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error("Load failed: " + src));
+    document.head.appendChild(s);
+  });
+}
+
 async function main() {
+  // 1) Load LIFF SDK with fallback CDN
   try {
-    if (typeof liff === "undefined") {
-      throw new Error("กรุณาเปิดผ่าน LINE app ครับ");
+    await loadScript("https://static.line-scdn.net/liff/edge/2/sdk.js");
+  } catch (e1) {
+    try {
+      await loadScript("https://cdn.jsdelivr.net/npm/@line/liff@2.22.3/dist/liff.min.js");
+    } catch (e2) {
+      renderError("กรุณาเปิดผ่าน LINE app ครับ (SDK โหลดไม่ได้)");
+      return;
     }
+  }
+
+  // 2) Load Chart.js
+  try {
+    await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js");
+  } catch (e) { /* chart optional */ }
+
+  // 3) Run LIFF flow
+  try {
     await liff.init({ liffId: LIFF_ID });
 
     if (!liff.isLoggedIn()) {

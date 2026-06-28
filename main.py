@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import anthropic
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 
@@ -1141,23 +1142,35 @@ async def webhook(
 
         reply = await handle_text_event(event)
 
-        # build_summary_flex returns a dict → send as FlexMessage
-        # all other handlers return str → send as TextMessage
+        # dict → Flex Message (ส่งตรงผ่าน LINE API เพื่อหลีกเลี่ยง SDK type validation)
+        # str  → Text Message (ผ่าน SDK ตามปกติ)
         if isinstance(reply, dict):
-            out_msg = FlexMessage(
-                alt_text=reply["alt_text"],
-                contents=reply["contents"],
-            )
-        else:
-            out_msg = TextMessage(text=reply)
-
-        with ApiClient(line_config) as api_client:
-            line_api = MessagingApi(api_client)
-            line_api.reply_message(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[out_msg],
+            async with httpx.AsyncClient() as http:
+                await http.post(
+                    "https://api.line.me/v2/bot/message/reply",
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                    },
+                    json={
+                        "replyToken": event.reply_token,
+                        "messages": [{
+                            "type": "flex",
+                            "altText": reply["alt_text"],
+                            "contents": reply["contents"],
+                        }],
+                    },
+                    timeout=10.0,
                 )
-            )
+        else:
+            out_msg = TextMessage(text=str(reply))
+            with ApiClient(line_config) as api_client:
+                line_api = MessagingApi(api_client)
+                line_api.reply_message(
+                    ReplyMessageRequest(
+                        reply_token=event.reply_token,
+                        messages=[out_msg],
+                    )
+                )
 
     return JSONResponse({"status": "ok"})

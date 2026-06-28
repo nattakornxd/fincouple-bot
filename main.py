@@ -276,6 +276,41 @@ async def upsert_budget(
     return result.data[0]
 
 
+
+
+async def delete_last_transaction(group_id: str) -> dict[str, Any] | None:
+    """ลบรายการล่าสุดของกลุ่ม — คืน row ที่ถูกลบ หรือ None ถ้าไม่มีรายการ"""
+    result = (
+        supabase.table("transactions")
+        .select("id, type, amount, category, memo, created_at")
+        .eq("group_id", group_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return None
+    last = result.data[0]
+    supabase.table("transactions").delete().eq("id", last["id"]).execute()
+    return last
+
+
+async def delete_current_month_transactions(group_id: str) -> int:
+    """ลบธุรกรรมทั้งหมดในเดือนปัจจุบัน — คืนจำนวนรายการที่ลบ"""
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    result = (
+        supabase.table("transactions")
+        .select("id")
+        .eq("group_id", group_id)
+        .gte("created_at", month_start)
+        .execute()
+    )
+    count = len(result.data) if result.data else 0
+    if count > 0:
+        supabase.table("transactions").delete().eq("group_id", group_id).gte("created_at", month_start).execute()
+    return count
+
 async def get_monthly_summary(group_id: str) -> dict[str, Any]:
     """Query current month transactions + budgets and return summary dict."""
     now = datetime.now(timezone.utc)
@@ -1003,6 +1038,57 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
     # -----------------------------------------------------------------------
     if lower_text in ("/help", "/start"):
         return build_help_flex()
+
+    # -----------------------------------------------------------------------
+    # COMMAND: /ลบล่าสุด — ลบรายการล่าสุดของกลุ่ม
+    # -----------------------------------------------------------------------
+    if lower_text in ("/ลบล่าสุด", "/undo", "ลบล่าสุด"):
+        if not group_id:
+            return build_no_group_flex()
+        try:
+            deleted = await delete_last_transaction(group_id)
+        except Exception as exc:
+            logger.error("Delete last tx error: %s", exc)
+            return "⚠️ ลบรายการไม่สำเร็จ กรุณาลองใหม่ครับ"
+
+        if not deleted:
+            return "📭 ยังไม่มีรายการในระบบครับ"
+
+        cat_emoji = {
+            "food": "🍜", "travel": "🚗", "home": "🏠", "shopping": "🛍️",
+            "entertainment": "🎬", "savings": "💰", "income": "💵", "other": "📝",
+        }
+        tx_type_label = "รายจ่าย" if deleted["type"] == "expense" else "รายรับ"
+        emoji = cat_emoji.get(deleted.get("category", "other"), "📝")
+        amount = deleted["amount"]
+        memo = deleted.get("memo") or deleted.get("category") or "-"
+        return (
+            f"🗑️ ลบรายการล่าสุดแล้วครับ\n\n"
+            f"{emoji} {tx_type_label}: {memo}\n"
+            f"💸 ฿{amount:,.0f}"
+        )
+
+    # -----------------------------------------------------------------------
+    # COMMAND: /ล้างเดือน — ลบธุรกรรมทั้งหมดในเดือนนี้
+    # -----------------------------------------------------------------------
+    if lower_text in ("/ล้างเดือน", "/clearmonth", "ล้างเดือน"):
+        if not group_id:
+            return build_no_group_flex()
+        now = datetime.now(timezone.utc)
+        month_name = now.strftime("%B %Y")
+        try:
+            count = await delete_current_month_transactions(group_id)
+        except Exception as exc:
+            logger.error("Clear month error: %s", exc)
+            return "⚠️ ล้างข้อมูลไม่สำเร็จ กรุณาลองใหม่ครับ"
+
+        if count == 0:
+            return f"📭 ไม่มีรายการในเดือนนี้ครับ"
+        return (
+            f"✅ ล้างข้อมูลเดือนนี้เรียบร้อยแล้วครับ\n"
+            f"🗑️ ลบทั้งหมด {count} รายการ\n"
+            f"📅 {month_name}"
+        )
 
     # -----------------------------------------------------------------------
     # ตรวจสอบ group membership ก่อนทำรายการ

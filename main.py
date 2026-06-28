@@ -1146,7 +1146,7 @@ async def webhook(
         # str  → Text Message (ผ่าน SDK ตามปกติ)
         if isinstance(reply, dict):
             async with httpx.AsyncClient() as http:
-                await http.post(
+                r = await http.post(
                     "https://api.line.me/v2/bot/message/reply",
                     headers={
                         "Content-Type": "application/json",
@@ -1160,8 +1160,20 @@ async def webhook(
                             "contents": reply["contents"],
                         }],
                     },
-                    timeout=10.0,
+                    timeout=15.0,
                 )
+                if not r.is_success:
+                    # LINE rejected the Flex — log and fall back to text
+                    logger.error("LINE Flex API error %s: %s", r.status_code, r.text)
+                    out_msg = TextMessage(text=reply["alt_text"])
+                    with ApiClient(line_config) as api_client:
+                        line_api = MessagingApi(api_client)
+                        line_api.reply_message(
+                            ReplyMessageRequest(
+                                reply_token=event.reply_token,
+                                messages=[out_msg],
+                            )
+                        )
         else:
             out_msg = TextMessage(text=str(reply))
             with ApiClient(line_config) as api_client:

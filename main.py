@@ -52,7 +52,7 @@ LINE_CHANNEL_ACCESS_TOKEN: str = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 CLAUDE_API_KEY: str = os.environ["CLAUDE_API_KEY"]
 SUPABASE_URL: str = os.environ["SUPABASE_URL"]
 SUPABASE_KEY: str = os.environ["SUPABASE_KEY"]
-LIFF_URL: str = os.getenv("LIFF_URL", "https://liff.line.me/YOUR_LIFF_ID")
+LIFF_URL: str = os.getenv("LIFF_URL", "https://liff.line.me/2010520479-6TrRjatU")
 
 # ---------------------------------------------------------------------------
 # System Prompt for Claude

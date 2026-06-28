@@ -929,7 +929,6 @@ def build_summary_flex(summary: dict[str, Any]) -> dict:
                     "style": "primary",
                     "color": _C_EMERALD,
                     "height": "sm",
-                    "cornerRadius": "24px",
                 }
             ],
         },

@@ -156,14 +156,18 @@ app.add_middleware(
 # ===========================================================================
 
 async def get_user(line_user_id: str) -> dict[str, Any] | None:
-    result = (
-        supabase.table("users")
-        .select("line_user_id, display_name, group_id")
-        .eq("line_user_id", line_user_id)
-        .maybe_single()
-        .execute()
-    )
-    return result.data
+    try:
+        result = (
+            supabase.table("users")
+            .select("line_user_id, display_name, group_id")
+            .eq("line_user_id", line_user_id)
+            .maybe_single()
+            .execute()
+        )
+        return result.data
+    except Exception as exc:
+        logger.warning("get_user error (returning None): %s", exc)
+        return None
 
 
 async def upsert_user(line_user_id: str, display_name: str) -> None:
@@ -1102,7 +1106,12 @@ async def health_check() -> JSONResponse:
 @app.get("/api/summary")
 async def api_summary(line_user_id: str = Query(...)) -> JSONResponse:
     """LIFF Dashboard endpoint — returns monthly summary for the user's group."""
-    user = await get_user(line_user_id)
+    try:
+        user = await get_user(line_user_id)
+    except Exception as exc:
+        logger.error("api_summary get_user error: %s", exc)
+        raise HTTPException(status_code=500, detail=f"DB error: {exc}")
+
     if not user or not user.get("group_id"):
         raise HTTPException(status_code=404, detail="User not found or not in a group")
 
@@ -1110,7 +1119,7 @@ async def api_summary(line_user_id: str = Query(...)) -> JSONResponse:
         summary = await get_monthly_summary(user["group_id"])
     except Exception as exc:
         logger.error("API summary error: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to fetch summary")
+        raise HTTPException(status_code=500, detail=f"Summary error: {exc}")
 
     return JSONResponse(summary)
 

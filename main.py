@@ -29,6 +29,7 @@ from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.messaging import (
     ApiClient,
     Configuration,
+    FlexMessage,
     MessagingApi,
     ReplyMessageRequest,
     TextMessage,
@@ -50,6 +51,7 @@ LINE_CHANNEL_ACCESS_TOKEN: str = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 CLAUDE_API_KEY: str = os.environ["CLAUDE_API_KEY"]
 SUPABASE_URL: str = os.environ["SUPABASE_URL"]
 SUPABASE_KEY: str = os.environ["SUPABASE_KEY"]
+LIFF_URL: str = os.getenv("LIFF_URL", "https://liff.line.me/YOUR_LIFF_ID")
 
 # ---------------------------------------------------------------------------
 # System Prompt for Claude
@@ -345,7 +347,7 @@ async def parse_with_claude(user_message: str) -> dict[str, Any]:
 
 
 # ===========================================================================
-# REPLY BUILDERS
+# REPLY BUILDERS — Wealth Emerald Theme (วินัย Bot)
 # ===========================================================================
 
 CATEGORY_EMOJI: dict[str, str] = {
@@ -365,83 +367,581 @@ PERIOD_TH: dict[str, str] = {
     "current_month": "รายเดือน",
 }
 
+_CAT_TH: dict[str, str] = {
+    "food": "อาหารและเครื่องดื่ม",
+    "travel": "การเดินทาง",
+    "home": "ที่อยู่อาศัย",
+    "shopping": "ช้อปปิ้ง",
+    "entertainment": "บันเทิง",
+    "savings": "เงินออม",
+    "income": "รายรับ",
+    "other": "อื่นๆ",
+}
 
-def build_expense_reply(amount: float, category: str, memo: str | None) -> str:
-    emoji = CATEGORY_EMOJI.get(category, "📝")
-    memo_line = f"\n📌 {memo}" if memo else ""
-    return (
-        f"{emoji} บันทึกรายจ่ายแล้ว!\n"
-        f"💸 ยอด: {amount:,.2f} บาท\n"
-        f"📂 หมวด: {category}{memo_line}"
-    )
-
-
-def build_income_reply(amount: float, category: str, memo: str | None) -> str:
-    memo_line = f"\n📌 {memo}" if memo else ""
-    return (
-        f"💵 บันทึกรายรับแล้ว!\n"
-        f"✅ ยอด: {amount:,.2f} บาท\n"
-        f"📂 หมวด: {category}{memo_line}"
-    )
-
-
-def build_budget_reply(amount: float, category: str, period: str) -> str:
-    emoji = CATEGORY_EMOJI.get(category, "📝")
-    period_th = PERIOD_TH.get(period, period)
-    return (
-        f"💰 ตั้งงบประมาณแล้ว!\n"
-        f"{emoji} หมวด: {category}\n"
-        f"💵 งบ: {amount:,.2f} บาท/{period_th}"
-    )
+# ── Wealth Emerald Color Palette ────────────────────────────────────────────
+_C_BG_PRIMARY   = "#052E16"   # Deep Forest (พื้นหลังหลัก)
+_C_BG_SECONDARY = "#064E3B"   # Forest Dark (หัว card)
+_C_BG_CARD      = "#0A3D2B"   # Card surface
+_C_EMERALD      = "#10B981"   # Primary accent
+_C_MINT         = "#34D399"   # Light accent
+_C_MINT_DIM     = "#6EE7B7"   # Dimmed mint text
+_C_MINT_WHITE   = "#D1FAE5"   # Near-white
+_C_AMBER        = "#F59E0B"   # Warm gold accent
+_C_INCOME       = "#22C55E"   # รายรับ green
+_C_EXPENSE      = "#F87171"   # รายจ่าย coral
+_C_DIVIDER      = "#065F46"   # Divider / progress bar bg
+_C_WHITE        = "#FFFFFF"
 
 
-def build_summary_reply(summary: dict[str, Any]) -> str:
-    month = summary["month"]
-    total_income = summary["total_income"]
-    total_expense = summary["total_expense"]
-    expense_by_cat = summary["expense_by_category"]
-    budgets = summary["budgets"]
-    balance = total_income - total_expense
-    balance_emoji = "✅" if balance >= 0 else "⚠️"
+_THAI_MONTHS: dict[str, str] = {
+    "January": "มกราคม", "February": "กุมภาพันธ์", "March": "มีนาคม",
+    "April": "เมษายน", "May": "พฤษภาคม", "June": "มิถุนายน",
+    "July": "กรกฎาคม", "August": "สิงหาคม", "September": "กันยายน",
+    "October": "ตุลาคม", "November": "พฤศจิกายน", "December": "ธันวาคม",
+}
 
-    lines = [
-        f"📊 สรุปการเงิน {month}",
-        "━━━━━━━━━━━━━━",
-        f"💵 รายรับ:  +{total_income:,.0f} บาท",
-        f"💸 รายจ่าย: -{total_expense:,.0f} บาท",
-        f"{balance_emoji} คงเหลือ:   {balance:,.0f} บาท",
-        "━━━━━━━━━━━━━━",
-        "📂 รายจ่ายแต่ละหมวด:",
-    ]
 
-    if not expense_by_cat:
-        lines.append("  ยังไม่มีรายจ่ายเดือนนี้ 🎉")
+def _thai_month(month_str: str) -> str:
+    parts = month_str.split(" ", 1)
+    return f"{_THAI_MONTHS.get(parts[0], parts[0])} {parts[1]}" if len(parts) == 2 else month_str
+
+
+def _build_category_row(cat: str, spent: float, budget: float | None) -> dict:
+    emoji = CATEGORY_EMOJI.get(cat, "📝")
+    cat_th = _CAT_TH.get(cat, cat)
+
+    if budget and budget > 0:
+        pct = min(int((spent / budget) * 100), 100)
+        overspent = spent > budget
+        bar_color = _C_EXPENSE if overspent else (_C_AMBER if pct > 80 else _C_EMERALD)
+        amount_color = _C_EXPENSE if overspent else (_C_AMBER if pct > 80 else _C_MINT)
+        filled_flex = max(pct, 1)
+        empty_flex = 100 - filled_flex
+        amount_label = f"฿{spent:,.0f} / ฿{budget:,.0f}  {pct}%"
     else:
-        for cat, spent in sorted(expense_by_cat.items(), key=lambda x: -x[1]):
-            emoji = CATEGORY_EMOJI.get(cat, "📝")
-            budget = budgets.get(cat)
-            if budget:
-                pct = (spent / budget) * 100
-                bar = "🔴" if pct > 100 else "🟡" if pct > 80 else "🟢"
-                lines.append(f"  {bar}{emoji} {cat}: {spent:,.0f}/{budget:,.0f} บ ({pct:.0f}%)")
-            else:
-                lines.append(f"  {emoji} {cat}: {spent:,.0f} บาท")
+        bar_color = _C_EMERALD
+        amount_color = _C_MINT
+        filled_flex = 0
+        empty_flex = 100
+        amount_label = f"฿{spent:,.0f}"
 
-    if budgets:
-        # Show categories with budget but no spending
-        unspent = {k: v for k, v in budgets.items() if k not in expense_by_cat}
-        for cat, budget in unspent.items():
-            emoji = CATEGORY_EMOJI.get(cat, "📝")
-            lines.append(f"  🟢{emoji} {cat}: 0/{budget:,.0f} บ (0%)")
+    row: dict = {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+            {
+                "type": "box",
+                "layout": "horizontal",
+                "contents": [
+                    {"type": "text", "text": f"{emoji}  {cat_th}", "size": "sm", "color": _C_MINT_WHITE, "flex": 1},
+                    {"type": "text", "text": amount_label, "size": "xs", "color": amount_color, "align": "end"},
+                ],
+            }
+        ],
+    }
 
-    return "\n".join(lines)
+    if budget:
+        bar_contents: list = []
+        if filled_flex > 0:
+            bar_contents.append({
+                "type": "box", "layout": "horizontal", "flex": filled_flex,
+                "backgroundColor": bar_color, "cornerRadius": "3px", "contents": [],
+            })
+        if empty_flex > 0:
+            bar_contents.append({
+                "type": "box", "layout": "horizontal", "flex": empty_flex, "contents": [],
+            })
+        row["contents"].append({
+            "type": "box", "layout": "horizontal", "height": "6px",
+            "backgroundColor": _C_DIVIDER, "cornerRadius": "3px", "contents": bar_contents,
+        })
+
+    return row
+
+
+def build_expense_flex(amount: float, category: str, memo: str | None) -> dict:
+    emoji = CATEGORY_EMOJI.get(category, "📝")
+    cat_th = _CAT_TH.get(category, category)
+    body_contents: list = [
+        {"type": "text", "text": f"฿{amount:,.2f}", "size": "3xl", "color": _C_EXPENSE, "weight": "bold"},
+    ]
+    if memo:
+        body_contents.append({"type": "text", "text": f"📌 {memo}", "size": "sm", "color": _C_MINT_DIM, "margin": "sm"})
+    body_contents.append({
+        "type": "box", "layout": "horizontal", "margin": "md",
+        "contents": [{
+            "type": "box", "layout": "horizontal",
+            "backgroundColor": _C_DIVIDER, "cornerRadius": "20px",
+            "paddingTop": "4px", "paddingBottom": "4px",
+            "paddingStart": "10px", "paddingEnd": "10px",
+            "contents": [{"type": "text", "text": f"{emoji}  {cat_th}", "size": "xs", "color": _C_MINT}],
+        }],
+    })
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "horizontal",
+                    "backgroundColor": _C_BG_SECONDARY,
+                    "paddingTop": "16px", "paddingBottom": "12px",
+                    "paddingStart": "16px", "paddingEnd": "16px", "alignItems": "center",
+                    "contents": [
+                        {"type": "text", "text": emoji, "size": "xl", "flex": 0},
+                        {"type": "box", "layout": "vertical", "flex": 1, "margin": "sm",
+                         "contents": [
+                             {"type": "text", "text": "บันทึกรายจ่ายแล้วครับ", "size": "sm", "color": _C_WHITE, "weight": "bold"},
+                             {"type": "text", "text": cat_th, "size": "xs", "color": _C_MINT, "margin": "xs"},
+                         ]},
+                    ],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_EXPENSE, "contents": []},
+                {"type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY, "paddingAll": "16px", "contents": body_contents},
+            ],
+        },
+    }
+    return {"alt_text": f"บันทึกรายจ่าย ฿{amount:,.0f} บาท", "contents": contents}
+
+
+def build_income_flex(amount: float, category: str, memo: str | None) -> dict:
+    body_contents: list = [
+        {"type": "text", "text": f"+฿{amount:,.2f}", "size": "3xl", "color": _C_INCOME, "weight": "bold"},
+    ]
+    if memo:
+        body_contents.append({"type": "text", "text": f"📌 {memo}", "size": "sm", "color": _C_MINT_DIM, "margin": "sm"})
+    body_contents.append({
+        "type": "box", "layout": "horizontal", "margin": "md",
+        "contents": [{
+            "type": "box", "layout": "horizontal",
+            "backgroundColor": _C_BG_CARD, "cornerRadius": "20px",
+            "paddingTop": "4px", "paddingBottom": "4px",
+            "paddingStart": "10px", "paddingEnd": "10px",
+            "borderColor": _C_INCOME, "borderWidth": "1px",
+            "contents": [{"type": "text", "text": "💵  รายรับ", "size": "xs", "color": _C_INCOME}],
+        }],
+    })
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "horizontal",
+                    "backgroundColor": _C_BG_CARD,
+                    "paddingTop": "16px", "paddingBottom": "12px",
+                    "paddingStart": "16px", "paddingEnd": "16px", "alignItems": "center",
+                    "contents": [
+                        {"type": "text", "text": "💵", "size": "xl", "flex": 0},
+                        {"type": "box", "layout": "vertical", "flex": 1, "margin": "sm",
+                         "contents": [
+                             {"type": "text", "text": "บันทึกรายรับแล้วครับ", "size": "sm", "color": _C_WHITE, "weight": "bold"},
+                             {"type": "text", "text": "รายรับ", "size": "xs", "color": _C_INCOME, "margin": "xs"},
+                         ]},
+                    ],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_INCOME, "contents": []},
+                {"type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY, "paddingAll": "16px", "contents": body_contents},
+            ],
+        },
+    }
+    return {"alt_text": f"บันทึกรายรับ ฿{amount:,.0f} บาท", "contents": contents}
+
+
+def build_budget_flex(amount: float, category: str, period: str) -> dict:
+    emoji = CATEGORY_EMOJI.get(category, "📝")
+    cat_th = _CAT_TH.get(category, category)
+    period_th = {"monthly": "รายเดือน", "weekly": "รายสัปดาห์", "current_month": "รายเดือน"}.get(period, period)
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "backgroundColor": _C_BG_SECONDARY,
+                    "paddingTop": "16px", "paddingBottom": "12px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [{"type": "text", "text": "💰 ตั้งงบประมาณแล้วครับ", "size": "sm", "color": _C_WHITE, "weight": "bold"}],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_AMBER, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": f"{emoji}  {cat_th}", "size": "md", "color": _C_MINT_WHITE, "weight": "bold"},
+                        {"type": "text", "text": f"฿{amount:,.2f} / {period_th}", "size": "xxl", "color": _C_AMBER, "weight": "bold", "margin": "sm"},
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": f"ตั้งงบ {cat_th} ฿{amount:,.0f}", "contents": contents}
+
+
+def build_help_flex() -> dict:
+    def _cmd(name: str, desc: str) -> dict:
+        return {
+            "type": "box", "layout": "vertical",
+            "paddingTop": "10px", "paddingBottom": "10px",
+            "paddingStart": "16px", "paddingEnd": "16px",
+            "contents": [
+                {"type": "text", "text": name, "size": "sm", "color": _C_AMBER, "weight": "bold"},
+                {"type": "text", "text": desc, "size": "xs", "color": _C_MINT_DIM, "margin": "xs"},
+            ],
+        }
+    contents = {
+        "type": "bubble", "size": "mega",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_SECONDARY,
+                    "paddingTop": "18px", "paddingBottom": "14px",
+                    "paddingStart": "18px", "paddingEnd": "18px",
+                    "contents": [
+                        {"type": "text", "text": "💎 วินัย", "size": "xl", "color": _C_AMBER, "weight": "bold"},
+                        {"type": "text", "text": "ผู้ช่วยดูแลการเงินคู่รัก", "size": "sm", "color": _C_MINT, "margin": "xs"},
+                    ],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_EMERALD, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingTop": "4px", "paddingBottom": "0px",
+                    "contents": [
+                        _cmd("/create", "สร้างกลุ่มใหม่สำหรับคุณและแฟน"),
+                        {"type": "box", "height": "1px", "layout": "horizontal", "backgroundColor": _C_DIVIDER, "marginStart": "16px", "contents": []},
+                        _cmd("/join <รหัส>", "เข้าร่วมกลุ่มด้วยรหัสเชิญ"),
+                        {"type": "box", "height": "1px", "layout": "horizontal", "backgroundColor": _C_DIVIDER, "marginStart": "16px", "contents": []},
+                        _cmd("พิมพ์ตามธรรมชาติ", "เช่น 'กินข้าวไป 150 บาท' หรือ 'เงินเดือนออก 30000'"),
+                        {"type": "box", "height": "1px", "layout": "horizontal", "backgroundColor": _C_DIVIDER, "marginStart": "16px", "contents": []},
+                        _cmd("สรุป / ขอดูสรุป", "ดูสรุปรายรับ-รายจ่ายประจำเดือน"),
+                    ],
+                },
+                {
+                    "type": "box", "layout": "horizontal", "backgroundColor": _C_BG_CARD, "paddingAll": "12px",
+                    "contents": [{"type": "text",
+                                  "text": "💡 กดปุ่ม บันทึก เพื่อเริ่มต้น หรือ Dashboard เพื่อดูภาพรวมครับ",
+                                  "size": "xs", "color": _C_MINT_DIM, "wrap": True}],
+                },
+            ],
+        },
+    }
+    return {"alt_text": "คู่มือการใช้งาน วินัย", "contents": contents}
+
+
+def build_create_flex(invite_code: str) -> dict:
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_SECONDARY,
+                    "paddingTop": "16px", "paddingBottom": "12px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [{"type": "text", "text": "🎉 สร้างกลุ่มสำเร็จแล้วครับ!", "size": "sm", "color": _C_WHITE, "weight": "bold"}],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_EMERALD, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "18px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": "รหัสเชิญสำหรับแฟนครับ", "size": "xs", "color": _C_MINT_DIM},
+                        {
+                            "type": "box", "layout": "horizontal",
+                            "backgroundColor": _C_BG_CARD, "cornerRadius": "12px",
+                            "paddingTop": "14px", "paddingBottom": "14px", "margin": "sm",
+                            "justifyContent": "center",
+                            "contents": [{"type": "text", "text": invite_code, "size": "3xl", "color": _C_AMBER, "weight": "bold", "align": "center"}],
+                        },
+                        {"type": "text", "text": "📤 ส่งรหัสนี้ให้แฟน แล้วให้พิมพ์:", "size": "xs", "color": _C_MINT_DIM, "margin": "md"},
+                        {
+                            "type": "box", "layout": "horizontal",
+                            "backgroundColor": _C_DIVIDER, "cornerRadius": "8px",
+                            "paddingAll": "8px", "margin": "xs",
+                            "contents": [{"type": "text", "text": f"/join {invite_code}", "size": "sm", "color": _C_MINT, "weight": "bold", "align": "center"}],
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": f"รหัสเชิญกลุ่ม: {invite_code}", "contents": contents}
+
+
+def build_join_flex() -> dict:
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_CARD,
+                    "paddingTop": "16px", "paddingBottom": "12px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [{"type": "text", "text": "🎊 เข้าร่วมกลุ่มสำเร็จแล้วครับ!", "size": "sm", "color": _C_WHITE, "weight": "bold"}],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_EMERALD, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "18px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": "👫 ตอนนี้คุณและแฟนอยู่ในกลุ่มเดียวกันแล้วครับ", "size": "sm", "color": _C_MINT_WHITE, "wrap": True},
+                        {"type": "text", "text": "💬 เริ่มบันทึกรายรับ-รายจ่ายได้เลยครับ!", "size": "sm", "color": _C_MINT, "margin": "md"},
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": "เข้าร่วมกลุ่มสำเร็จแล้วครับ", "contents": contents}
+
+
+def build_record_prompt_flex() -> dict:
+    def _ex(text: str) -> dict:
+        return {
+            "type": "box", "layout": "horizontal",
+            "backgroundColor": _C_BG_SECONDARY, "cornerRadius": "8px", "paddingAll": "10px",
+            "contents": [{"type": "text", "text": text, "size": "sm", "color": _C_MINT_WHITE, "wrap": True}],
+        }
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_SECONDARY,
+                    "paddingTop": "16px", "paddingBottom": "12px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [{"type": "text", "text": "✏️ พิมพ์รายการที่ต้องการบันทึกครับ", "size": "sm", "color": _C_WHITE, "weight": "bold"}],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_EMERALD, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": "ตัวอย่างข้อความ:", "size": "xs", "color": _C_MINT_DIM},
+                        _ex("🍜  กินข้าวไป 150 บาท"),
+                        _ex("💵  เงินเดือนออก 30,000"),
+                        _ex("💰  ตั้งงบค่าอาหาร 5,000 บาท"),
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": "บันทึกรายการ", "contents": contents}
+
+
+def build_no_group_flex() -> dict:
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_SECONDARY,
+                    "paddingTop": "16px", "paddingBottom": "12px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [
+                        {"type": "text", "text": "👋 สวัสดีครับ! วินัยพร้อมช่วยแล้ว", "size": "sm", "color": _C_WHITE, "weight": "bold"},
+                        {"type": "text", "text": "สร้างหรือเข้าร่วมกลุ่มก่อนนะครับ", "size": "xs", "color": _C_MINT, "margin": "xs"},
+                    ],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_AMBER, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box", "layout": "horizontal",
+                            "backgroundColor": _C_BG_CARD, "cornerRadius": "8px", "paddingAll": "10px",
+                            "contents": [
+                                {"type": "text", "text": "📌  /create", "size": "sm", "color": _C_EMERALD, "weight": "bold", "flex": 0},
+                                {"type": "text", "text": "สร้างกลุ่มใหม่", "size": "sm", "color": _C_MINT_DIM, "margin": "md"},
+                            ],
+                        },
+                        {
+                            "type": "box", "layout": "horizontal",
+                            "backgroundColor": _C_BG_CARD, "cornerRadius": "8px", "paddingAll": "10px",
+                            "contents": [
+                                {"type": "text", "text": "📌  /join <รหัส>", "size": "sm", "color": _C_EMERALD, "weight": "bold", "flex": 0},
+                                {"type": "text", "text": "เข้าร่วมกลุ่ม", "size": "sm", "color": _C_MINT_DIM, "margin": "md"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": "เริ่มต้นใช้งาน วินัย", "contents": contents}
+
+
+def build_summary_flex(summary: dict[str, Any]) -> dict:
+    """Build a Wealth Emerald Flex Message for the monthly summary."""
+    month_th = _thai_month(summary["month"])
+    total_income: float = summary["total_income"]
+    total_expense: float = summary["total_expense"]
+    balance: float = summary["balance"]
+    expense_by_cat: dict[str, float] = summary["expense_by_category"]
+    budgets: dict[str, float] = summary["budgets"]
+
+    # Merge categories: expenses + budgets with zero spend
+    all_cats: dict[str, dict] = {}
+    for cat, spent in expense_by_cat.items():
+        all_cats[cat] = {"spent": spent, "budget": budgets.get(cat)}
+    for cat, bud in budgets.items():
+        if cat not in all_cats:
+            all_cats[cat] = {"spent": 0.0, "budget": bud}
+
+    # Sort by spent descending, max 6 rows
+    sorted_cats = sorted(all_cats.items(), key=lambda x: -x[1]["spent"])
+    category_rows: list = [_build_category_row(c, d["spent"], d["budget"]) for c, d in sorted_cats[:6]]
+
+    if not category_rows:
+        category_rows = [{
+            "type": "text", "text": "ยังไม่มีรายจ่ายเดือนนี้ 🎉",
+            "size": "sm", "color": _C_INCOME, "align": "center",
+        }]
+
+    balance_color = _C_INCOME if balance >= 0 else _C_EXPENSE
+
+    contents = {
+        "type": "bubble",
+        "size": "giga",
+        "background": {
+            "type": "linearGradient",
+            "angle": "160deg",
+            "startColor": _C_BG_PRIMARY,
+            "endColor": _C_BG_SECONDARY,
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "0px",
+            "contents": [
+                # ── Header ──────────────────────────────────────────────────
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "paddingTop": "20px",
+                    "paddingBottom": "16px",
+                    "paddingStart": "20px",
+                    "paddingEnd": "20px",
+                    "alignItems": "center",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "✦  วินัย · ผู้ช่วยการเงิน",
+                                 "size": "xxs", "color": _C_AMBER, "weight": "bold"},
+                                {"type": "text", "text": "สรุปการเงิน",
+                                 "size": "xxl", "color": _C_WHITE, "weight": "bold", "margin": "xs"},
+                                {"type": "text", "text": month_th,
+                                 "size": "sm", "color": _C_MINT, "margin": "xs"},
+                            ],
+                        },
+                        {"type": "text", "text": "💎", "size": "3xl", "align": "end", "flex": 0},
+                    ],
+                },
+                # ── Emerald separator ───────────────────────────────────────
+                {"type": "box", "layout": "horizontal", "height": "2px",
+                 "backgroundColor": _C_EMERALD, "contents": []},
+                # ── Stat cards (Bento) ──────────────────────────────────────
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "paddingTop": "16px",
+                    "paddingBottom": "8px",
+                    "paddingStart": "16px",
+                    "paddingEnd": "16px",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box", "layout": "vertical", "flex": 1,
+                            "backgroundColor": _C_BG_CARD, "cornerRadius": "12px",
+                            "paddingAll": "12px", "borderColor": _C_INCOME, "borderWidth": "1px",
+                            "contents": [
+                                {"type": "text", "text": "💚 รายรับ", "size": "xs",
+                                 "color": _C_INCOME, "weight": "bold"},
+                                {"type": "text", "text": f"฿{total_income:,.0f}",
+                                 "size": "lg", "color": _C_WHITE, "weight": "bold", "margin": "sm"},
+                            ],
+                        },
+                        {
+                            "type": "box", "layout": "vertical", "flex": 1,
+                            "backgroundColor": "#1A0D0D", "cornerRadius": "12px",
+                            "paddingAll": "12px", "borderColor": _C_EXPENSE, "borderWidth": "1px",
+                            "contents": [
+                                {"type": "text", "text": "❤️ รายจ่าย", "size": "xs",
+                                 "color": _C_EXPENSE, "weight": "bold"},
+                                {"type": "text", "text": f"฿{total_expense:,.0f}",
+                                 "size": "lg", "color": _C_WHITE, "weight": "bold", "margin": "sm"},
+                            ],
+                        },
+                        {
+                            "type": "box", "layout": "vertical", "flex": 1,
+                            "backgroundColor": "#1C1500", "cornerRadius": "12px",
+                            "paddingAll": "12px", "borderColor": _C_AMBER, "borderWidth": "1px",
+                            "contents": [
+                                {"type": "text", "text": "✨ คงเหลือ", "size": "xs",
+                                 "color": _C_AMBER, "weight": "bold"},
+                                {"type": "text", "text": f"฿{balance:,.0f}",
+                                 "size": "lg", "color": balance_color, "weight": "bold", "margin": "sm"},
+                            ],
+                        },
+                    ],
+                },
+                # ── Budget section label ────────────────────────────────────
+                {
+                    "type": "box", "layout": "vertical",
+                    "paddingTop": "12px", "paddingBottom": "6px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [
+                        {"type": "text", "text": "◆  งบประมาณหมวดหมู่",
+                         "size": "xs", "color": _C_MINT, "weight": "bold"}
+                    ],
+                },
+                # ── Category rows ───────────────────────────────────────────
+                {
+                    "type": "box", "layout": "vertical",
+                    "paddingStart": "16px", "paddingEnd": "16px", "paddingBottom": "16px",
+                    "spacing": "md",
+                    "contents": category_rows,
+                },
+                # ── Bottom divider ──────────────────────────────────────────
+                {"type": "box", "layout": "horizontal", "height": "1px",
+                 "backgroundColor": _C_DIVIDER, "contents": []},
+            ],
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "16px",
+            "backgroundColor": _C_BG_PRIMARY,
+            "contents": [
+                {
+                    "type": "button",
+                    "action": {"type": "uri", "label": "📊  เปิด Dashboard แบบเต็ม", "uri": LIFF_URL},
+                    "style": "primary",
+                    "color": _C_EMERALD,
+                    "height": "sm",
+                    "cornerRadius": "24px",
+                }
+            ],
+        },
+    }
+
+    return {"alt_text": f"📊 สรุปการเงิน วินัย — {summary['month']}", "contents": contents}
 
 
 # ===========================================================================
 # CORE EVENT HANDLER
 # ===========================================================================
 
-async def handle_text_event(event: MessageEvent) -> str:
+async def handle_text_event(event: MessageEvent) -> str | dict:
     line_user_id: str = event.source.user_id
     user_text: str = event.message.text.strip()
     lower_text = user_text.lower()
@@ -466,14 +966,7 @@ async def handle_text_event(event: MessageEvent) -> str:
             logger.error("Create group error: %s", exc)
             return "⚠️ สร้างกลุ่มไม่สำเร็จ กรุณาลองใหม่นะครับ"
 
-        return (
-            f"🎉 สร้างกลุ่มสำเร็จแล้ว!\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"🔑 รหัสเชิญ: {group['invite_code']}\n"
-            f"━━━━━━━━━━━━━━\n"
-            f"📤 ส่งรหัสนี้ให้แฟน แล้วให้พิมพ์:\n"
-            f"/join {group['invite_code']}"
-        )
+        return build_create_flex(group["invite_code"])
 
     # -----------------------------------------------------------------------
     # COMMAND: /join <code> — เข้าร่วมกลุ่ม
@@ -498,54 +991,25 @@ async def handle_text_event(event: MessageEvent) -> str:
                 "กรุณาตรวจสอบรหัสอีกครั้งนะครับ"
             )
 
-        return (
-            f"🎊 เข้าร่วมกลุ่มสำเร็จแล้ว!\n"
-            f"👫 ตอนนี้คุณและแฟนอยู่ในกลุ่มเดียวกันแล้ว\n"
-            f"💬 เริ่มบันทึกรายรับ-รายจ่ายได้เลยครับ!"
-        )
+        return build_join_flex()
 
     # -----------------------------------------------------------------------
     # COMMAND: บันทึก — prompt ให้พิมพ์รายการ
     # -----------------------------------------------------------------------
     if lower_text == "บันทึก":
-        return (
-            "💬 พิมพ์รายการที่ต้องการบันทึกได้เลยครับ\n"
-            "━━━━━━━━━━━━━━\n"
-            "ตัวอย่าง:\n"
-            "  • กินข้าวไป 150 บาท\n"
-            "  • เงินเดือนออก 30000\n"
-            "  • ตั้งงบค่าอาหาร 5000 บาท"
-        )
+        return build_record_prompt_flex()
 
     # -----------------------------------------------------------------------
     # COMMAND: /help — คู่มือการใช้งาน
     # -----------------------------------------------------------------------
     if lower_text in ("/help", "/start"):
-        return (
-            "🤖 FinCouple AI — คู่มือการใช้งาน\n"
-            "━━━━━━━━━━━━━━\n"
-            "📌 คำสั่ง:\n"
-            "  /create — สร้างกลุ่มใหม่\n"
-            "  /join <รหัส> — เข้าร่วมกลุ่ม\n"
-            "  /help — ดูคำสั่งทั้งหมด\n"
-            "━━━━━━━━━━━━━━\n"
-            "💬 พิมพ์ตามธรรมชาติ เช่น:\n"
-            "  • 'กินข้าวไป 150 บาท'\n"
-            "  • 'เงินเดือนออก 30000'\n"
-            "  • 'ตั้งงบค่าอาหาร 5000 บาท'\n"
-            "  • 'ขอดูสรุปยอดเดือนนี้'"
-        )
+        return build_help_flex()
 
     # -----------------------------------------------------------------------
     # ตรวจสอบ group membership ก่อนทำรายการ
     # -----------------------------------------------------------------------
     if not group_id:
-        return (
-            "👋 สวัสดี! ยังไม่ได้อยู่ในกลุ่มนะครับ\n"
-            "━━━━━━━━━━━━━━\n"
-            "📌 พิมพ์ /create เพื่อสร้างกลุ่มใหม่\n"
-            "📌 พิมพ์ /join <รหัส> เพื่อเข้าร่วมกลุ่ม"
-        )
+        return build_no_group_flex()
 
     # -----------------------------------------------------------------------
     # Parse ด้วย Claude AI
@@ -554,7 +1018,7 @@ async def handle_text_event(event: MessageEvent) -> str:
         parsed = await parse_with_claude(user_text)
     except (json.JSONDecodeError, KeyError, IndexError) as exc:
         logger.error("Claude parse error: %s", exc)
-        return "⚠️ AI ประมวลผลไม่ได้ กรุณาลองใหม่อีกครั้งนะครับ"
+        return "⚠️ วินัยประมวลผลไม่ได้ในขณะนี้ครับ กรุณาลองใหม่อีกครั้งนะครับ"
 
     intent: str = parsed.get("intent", "unknown")
     data: dict | None = parsed.get("data")
@@ -586,9 +1050,9 @@ async def handle_text_event(event: MessageEvent) -> str:
             return "⚠️ บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้งนะครับ"
 
         return (
-            build_expense_reply(amount, category, memo)
+            build_expense_flex(amount, category, memo)
             if tx_type == "expense"
-            else build_income_reply(amount, category, memo)
+            else build_income_flex(amount, category, memo)
         )
 
     # -----------------------------------------------------------------------
@@ -610,10 +1074,10 @@ async def handle_text_event(event: MessageEvent) -> str:
             logger.error("Budget upsert error: %s", exc)
             return "⚠️ บันทึกงบประมาณไม่สำเร็จ กรุณาลองใหม่อีกครั้งนะครับ"
 
-        return build_budget_reply(amount, category, period)
+        return build_budget_flex(amount, category, period)
 
     # -----------------------------------------------------------------------
-    # INTENT: ask_summary — ดูสรุปยอด
+    # INTENT: ask_summary — ดูสรุปยอด (Premium Flex Message)
     # -----------------------------------------------------------------------
     elif intent == "ask_summary":
         try:
@@ -622,13 +1086,13 @@ async def handle_text_event(event: MessageEvent) -> str:
             logger.error("Summary error: %s", exc)
             return "⚠️ ดึงข้อมูลสรุปไม่ได้ กรุณาลองใหม่อีกครั้งนะครับ"
 
-        return build_summary_reply(summary)
+        return build_summary_flex(summary)  # returns dict → FlexMessage in webhook
 
     # -----------------------------------------------------------------------
     # INTENT: unknown
     # -----------------------------------------------------------------------
     else:
-        return f"❓ {error_msg or 'ไม่เข้าใจข้อความ กรุณาลองพิมพ์ใหม่นะครับ'}"
+        return f"❓ วินัยไม่เข้าใจข้อความนะครับ — {error_msg or 'กรุณาลองพิมพ์ใหม่อีกครั้งนะครับ'}"
 
 
 # ===========================================================================
@@ -637,7 +1101,7 @@ async def handle_text_event(event: MessageEvent) -> str:
 
 @app.get("/health")
 async def health_check() -> JSONResponse:
-    return JSONResponse({"status": "ok", "service": "FinCouple AI", "version": "4.0.0"})
+    return JSONResponse({"status": "ok", "service": "วินัย Bot", "version": "5.0.0"})
 
 
 @app.get("/api/summary")
@@ -675,14 +1139,24 @@ async def webhook(
         if not isinstance(event.message, TextMessageContent):
             continue
 
-        reply_text = await handle_text_event(event)
+        reply = await handle_text_event(event)
+
+        # build_summary_flex returns a dict → send as FlexMessage
+        # all other handlers return str → send as TextMessage
+        if isinstance(reply, dict):
+            out_msg = FlexMessage(
+                alt_text=reply["alt_text"],
+                contents=reply["contents"],
+            )
+        else:
+            out_msg = TextMessage(text=reply)
 
         with ApiClient(line_config) as api_client:
             line_api = MessagingApi(api_client)
             line_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
-                    messages=[TextMessage(text=reply_text)],
+                    messages=[out_msg],
                 )
             )
 

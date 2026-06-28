@@ -620,6 +620,91 @@ def build_budget_flex(amount: float, category: str, period: str) -> dict:
     return {"alt_text": f"ตั้งงบ {cat_th} ฿{amount:,.0f}", "contents": contents}
 
 
+def build_delete_flex(deleted: dict) -> dict:
+    """Flex Message สำหรับ /ลบล่าสุด"""
+    cat_emoji = {
+        "food": "🍜", "travel": "🚗", "home": "🏠", "shopping": "🛍️",
+        "entertainment": "🎬", "savings": "💰", "income": "💵", "other": "📝",
+    }
+    tx_type_label = "รายจ่าย" if deleted["type"] == "expense" else "รายรับ"
+    type_color = _C_EXPENSE if deleted["type"] == "expense" else _C_INCOME
+    emoji = cat_emoji.get(deleted.get("category", "other"), "📝")
+    amount = deleted["amount"]
+    memo = deleted.get("memo") or deleted.get("category") or "-"
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "backgroundColor": "#7F1D1D",
+                    "paddingTop": "14px", "paddingBottom": "10px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [{"type": "text", "text": "🗑️ ลบรายการล่าสุดแล้วครับ", "size": "sm", "color": "#FFFFFF", "weight": "bold"}],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_EXPENSE, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": f"{emoji}  {memo}", "size": "md", "color": _C_MINT_WHITE, "weight": "bold"},
+                        {
+                            "type": "box", "layout": "horizontal", "margin": "sm",
+                            "contents": [
+                                {"type": "text", "text": tx_type_label, "size": "sm", "color": type_color, "flex": 1},
+                                {"type": "text", "text": f"฿{amount:,.0f}", "size": "lg", "color": type_color, "weight": "bold", "align": "end"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": f"ลบรายการ {memo} ฿{amount:,.0f}", "contents": contents}
+
+
+def build_clearmonth_flex(count: int, month_name: str) -> dict:
+    """Flex Message สำหรับ /ล้างเดือน"""
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "backgroundColor": "#1E1B4B",
+                    "paddingTop": "14px", "paddingBottom": "10px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [{"type": "text", "text": "✅ ล้างข้อมูลเรียบร้อยแล้วครับ", "size": "sm", "color": "#FFFFFF", "weight": "bold"}],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_AMBER, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box", "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "🗑️ ลบทั้งหมด", "size": "sm", "color": _C_MINT_DIM, "flex": 1},
+                                {"type": "text", "text": f"{count} รายการ", "size": "sm", "color": _C_MINT_WHITE, "weight": "bold", "align": "end"},
+                            ],
+                        },
+                        {
+                            "type": "box", "layout": "horizontal", "margin": "sm",
+                            "contents": [
+                                {"type": "text", "text": "📅 เดือน", "size": "sm", "color": _C_MINT_DIM, "flex": 1},
+                                {"type": "text", "text": month_name, "size": "sm", "color": _C_MINT_WHITE, "weight": "bold", "align": "end"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": f"ล้างข้อมูล {count} รายการ เดือน {month_name}", "contents": contents}
+
+
 def build_help_flex() -> dict:
     def _cmd(name: str, desc: str) -> dict:
         return {
@@ -850,10 +935,14 @@ def build_summary_flex(summary: dict[str, Any]) -> dict:
         "type": "bubble",
         "size": "giga",
 
+        "styles": {
+            "body": {"backgroundColor": _C_BG_PRIMARY},
+        },
         "body": {
             "type": "box",
             "layout": "vertical",
             "paddingAll": "0px",
+            "backgroundColor": _C_BG_PRIMARY,
             "contents": [
                 # ── Header ──────────────────────────────────────────────────
                 {
@@ -864,6 +953,7 @@ def build_summary_flex(summary: dict[str, Any]) -> dict:
                     "paddingStart": "20px",
                     "paddingEnd": "20px",
                     "alignItems": "center",
+                    "backgroundColor": _C_BG_SECONDARY,
                     "contents": [
                         {
                             "type": "box",
@@ -1054,19 +1144,7 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
         if not deleted:
             return "📭 ยังไม่มีรายการในระบบครับ"
 
-        cat_emoji = {
-            "food": "🍜", "travel": "🚗", "home": "🏠", "shopping": "🛍️",
-            "entertainment": "🎬", "savings": "💰", "income": "💵", "other": "📝",
-        }
-        tx_type_label = "รายจ่าย" if deleted["type"] == "expense" else "รายรับ"
-        emoji = cat_emoji.get(deleted.get("category", "other"), "📝")
-        amount = deleted["amount"]
-        memo = deleted.get("memo") or deleted.get("category") or "-"
-        return (
-            f"🗑️ ลบรายการล่าสุดแล้วครับ\n\n"
-            f"{emoji} {tx_type_label}: {memo}\n"
-            f"💸 ฿{amount:,.0f}"
-        )
+        return build_delete_flex(deleted)
 
     # -----------------------------------------------------------------------
     # COMMAND: /ล้างเดือน — ลบธุรกรรมทั้งหมดในเดือนนี้
@@ -1083,12 +1161,8 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
             return "⚠️ ล้างข้อมูลไม่สำเร็จ กรุณาลองใหม่ครับ"
 
         if count == 0:
-            return f"📭 ไม่มีรายการในเดือนนี้ครับ"
-        return (
-            f"✅ ล้างข้อมูลเดือนนี้เรียบร้อยแล้วครับ\n"
-            f"🗑️ ลบทั้งหมด {count} รายการ\n"
-            f"📅 {month_name}"
-        )
+            return "📭 ไม่มีรายการในเดือนนี้ครับ"
+        return build_clearmonth_flex(count, month_name)
 
     # -----------------------------------------------------------------------
     # ตรวจสอบ group membership ก่อนทำรายการ
@@ -1513,10 +1587,9 @@ async function main() {
 }
 
 window.onload = main;
-</script>
+ript>
 </body>
 </html>
-
 """
 
 @app.get("/liff", response_class=HTMLResponse)
@@ -1575,8 +1648,6 @@ async def webhook(
             logger.error("handle_text_event error: %s", exc, exc_info=True)
             reply = "⚠️ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้งนะครับ"
 
-        # dict → Flex Message via raw httpx
-        # str  → Text Message via SDK
         if isinstance(reply, dict):
             try:
                 async with httpx.AsyncClient() as http:

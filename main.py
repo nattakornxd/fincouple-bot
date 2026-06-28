@@ -278,6 +278,21 @@ async def upsert_budget(
 
 
 
+async def delete_budget(group_id: str, category: str) -> bool:
+    """ลบงบประมาณของหมวดหมู่นั้น — คืน True ถ้าลบได้, False ถ้าไม่มีงบ"""
+    result = (
+        supabase.table("budgets")
+        .select("id")
+        .eq("group_id", group_id)
+        .eq("category", category)
+        .execute()
+    )
+    if not result.data:
+        return False
+    supabase.table("budgets").delete().eq("group_id", group_id).eq("category", category).execute()
+    return True
+
+
 async def delete_last_transaction(group_id: str) -> dict[str, Any] | None:
     """ลบรายการล่าสุดของกลุ่ม — คืน row ที่ถูกลบ หรือ None ถ้าไม่มีรายการ"""
     result = (
@@ -618,6 +633,36 @@ def build_budget_flex(amount: float, category: str, period: str) -> dict:
         },
     }
     return {"alt_text": f"ตั้งงบ {cat_th} ฿{amount:,.0f}", "contents": contents}
+
+
+def build_delete_budget_flex(category: str, cat_th: str, emoji: str) -> dict:
+    """Flex Message สำหรับ /ลบงบ"""
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "backgroundColor": "#78350F",
+                    "paddingTop": "14px", "paddingBottom": "10px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [{"type": "text", "text": "🗑️ ลบงบประมาณแล้วครับ", "size": "sm", "color": "#FFFFFF", "weight": "bold"}],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px", "backgroundColor": _C_AMBER, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": f"{emoji}  {cat_th}", "size": "md", "color": _C_MINT_WHITE, "weight": "bold"},
+                        {"type": "text", "text": "งบหมวดนี้ถูกลบออกจากระบบแล้ว", "size": "sm", "color": _C_MINT_DIM, "margin": "sm"},
+                        {"type": "text", "text": "ตั้งงบใหม่ได้โดยพิมพ์จำนวนเงิน + หมวดหมู่ครับ", "size": "xxs", "color": _C_MINT_DIM, "wrap": True},
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": f"ลบงบ {cat_th}", "contents": contents}
 
 
 def build_delete_flex(deleted: dict) -> dict:
@@ -1130,6 +1175,46 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
         return build_help_flex()
 
     # -----------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # COMMAND: /ลบงบ[หมวด] — ลบงบประมาณของหมวดหมู่นั้น
+    # -----------------------------------------------------------------------
+    _CAT_KEYWORDS: dict[str, list[str]] = {
+        "food":          ["อาหาร", "food", "กิน", "เครื่องดื่ม"],
+        "travel":        ["เดินทาง", "travel", "รถ", "น้ำมัน", "ค่ารถ"],
+        "home":          ["บ้าน", "home", "ที่อยู่", "ค่าน้ำ", "ค่าไฟ", "เน็ต"],
+        "shopping":      ["ช้อปปิ้ง", "shopping", "เสื้อผ้า", "ช้อป"],
+        "entertainment": ["บันเทิง", "entertainment", "หนัง", "ท่องเที่ยว"],
+        "savings":       ["ออม", "savings", "ลงทุน", "เก็บ"],
+        "income":        ["รายรับ", "income", "เงินเดือน"],
+        "other":         ["อื่นๆ", "other", "อื่น"],
+    }
+    if lower_text.startswith("/ลบงบ") or lower_text.startswith("ลบงบ"):
+        if not group_id:
+            return build_no_group_flex()
+        raw_keyword = lower_text.replace("/ลบงบ", "").replace("ลบงบ", "").strip()
+        matched_cat: str | None = None
+        for cat, keywords in _CAT_KEYWORDS.items():
+            if any(kw in raw_keyword for kw in keywords):
+                matched_cat = cat
+                break
+        if not matched_cat:
+            lines = ["🗂️ ระบุหมวดหมู่ที่ต้องการลบงบครับ เช่น:"]
+            for cat, kws in _CAT_KEYWORDS.items():
+                emoji = CATEGORY_EMOJI.get(cat, "📝")
+                lines.append(f"  {emoji} /ลบงบ{kws[0]}")
+            return "\n".join(lines)
+        try:
+            deleted_ok = await delete_budget(group_id, matched_cat)
+        except Exception as exc:
+            logger.error("Delete budget error: %s", exc)
+            return "⚠️ ลบงบไม่สำเร็จ กรุณาลองใหม่ครับ"
+        if not deleted_ok:
+            cat_th = _CAT_TH.get(matched_cat, matched_cat)
+            return f"📭 ยังไม่มีงบหมวด {cat_th} ในระบบครับ"
+        emoji = CATEGORY_EMOJI.get(matched_cat, "📝")
+        cat_th = _CAT_TH.get(matched_cat, matched_cat)
+        return build_delete_budget_flex(matched_cat, cat_th, emoji)
+
     # COMMAND: /ลบล่าสุด — ลบรายการล่าสุดของกลุ่ม
     # -----------------------------------------------------------------------
     if lower_text in ("/ลบล่าสุด", "/undo", "ลบล่าสุด"):
@@ -1540,7 +1625,6 @@ function loadScript(src) {
 }
 
 async function main() {
-  // 1) Load LIFF SDK with fallback CDN
   try {
     await loadScript("https://static.line-scdn.net/liff/edge/2/sdk.js");
   } catch (e1) {
@@ -1551,50 +1635,32 @@ async function main() {
       return;
     }
   }
-
-  // 2) Load Chart.js
   try {
     await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js");
   } catch (e) { /* chart optional */ }
-
-  // 3) Run LIFF flow
   try {
     await liff.init({ liffId: LIFF_ID });
-
-    if (!liff.isLoggedIn()) {
-      liff.login();
-      return;
-    }
-
+    if (!liff.isLoggedIn()) { liff.login(); return; }
     const profile = await liff.getProfile();
     const lineUserId = profile.userId;
-
     const res = await fetch(`${API_BASE}/api/summary?line_user_id=${encodeURIComponent(lineUserId)}`);
-
-    if (res.status === 404) {
-      renderNoGroup(profile);
-      return;
-    }
+    if (res.status === 404) { renderNoGroup(profile); return; }
     if (!res.ok) throw new Error(`API error ${res.status}`);
-
     const data = await res.json();
     renderDashboard(profile, data);
-
   } catch (err) {
     console.error(err);
     renderError(err.message || "เกิดข้อผิดพลาด กรุณาลองใหม่");
   }
 }
-
 window.onload = main;
-ript>
+</script>
 </body>
 </html>
 """
 
 @app.get("/liff", response_class=HTMLResponse)
 async def liff_dashboard():
-    """Serve the LIFF Dashboard HTML."""
     return HTMLResponse(content=LIFF_HTML)
 
 @app.get("/health")
@@ -1604,22 +1670,18 @@ async def health_check() -> JSONResponse:
 
 @app.get("/api/summary")
 async def api_summary(line_user_id: str = Query(...)) -> JSONResponse:
-    """LIFF Dashboard endpoint — returns monthly summary for the user's group."""
     try:
         user = await get_user(line_user_id)
     except Exception as exc:
         logger.error("api_summary get_user error: %s", exc)
         raise HTTPException(status_code=500, detail=f"DB error: {exc}")
-
     if not user or not user.get("group_id"):
         raise HTTPException(status_code=404, detail="User not found or not in a group")
-
     try:
         summary = await get_monthly_summary(user["group_id"])
     except Exception as exc:
         logger.error("API summary error: %s", exc)
         raise HTTPException(status_code=500, detail=f"Summary error: {exc}")
-
     return JSONResponse(summary)
 
 
@@ -1629,25 +1691,21 @@ async def webhook(
     x_line_signature: str = Header(alias="X-Line-Signature"),
 ) -> JSONResponse:
     body: bytes = await request.body()
-
     try:
         events = line_parser.parse(body.decode("utf-8"), x_line_signature)
     except InvalidSignatureError:
         logger.warning("Invalid LINE signature received.")
         raise HTTPException(status_code=400, detail="Invalid signature")
-
     for event in events:
         if not isinstance(event, MessageEvent):
             continue
         if not isinstance(event.message, TextMessageContent):
             continue
-
         try:
             reply = await handle_text_event(event)
         except Exception as exc:
             logger.error("handle_text_event error: %s", exc, exc_info=True)
             reply = "⚠️ เกิดข้อผิดพลาด กรุณาลองใหม่อีกครั้งนะครับ"
-
         if isinstance(reply, dict):
             try:
                 async with httpx.AsyncClient() as http:
@@ -1684,5 +1742,4 @@ async def webhook(
                     )
             except Exception as exc:
                 logger.error("Text send error: %s", exc)
-
     return JSONResponse({"status": "ok"})

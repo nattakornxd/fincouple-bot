@@ -1086,7 +1086,19 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
             logger.error("Summary error: %s", exc)
             return "⚠️ ดึงข้อมูลสรุปไม่ได้ กรุณาลองใหม่อีกครั้งนะครับ"
 
-        return build_summary_flex(summary)  # returns dict → FlexMessage in webhook
+        # DEBUG: Return text instead of Flex to confirm Railway deploy
+        s = summary
+        cat_lines = [f"  • {k}: ฿{v:,.0f}" for k,v in s['expense_by_category'].items()]
+        cat_text = "\n".join(cat_lines) if cat_lines else "  (ยังไม่มีรายจ่าย)"
+        return (
+            f"📊 สรุปการเงิน {s['month']}\n"
+            f"รายรับ: +฿{s['total_income']:,.0f}\n"
+            f"รายจ่าย: -฿{s['total_expense']:,.0f}\n"
+            f"คงเหลือ: ฿{s['balance']:,.0f}\n"
+            f"──────────\n"
+            f"{cat_text}\n"
+            f"[v6-text-debug]"
+        )
 
     # -----------------------------------------------------------------------
     # INTENT: unknown

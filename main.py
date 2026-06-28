@@ -1109,7 +1109,7 @@ LIFF_HTML = """
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>FinCouple AI — Dashboard</title>
-  <script src="https://cdn.jsdelivr.net/npm/@line/liff@2.22.3/dist/liff.min.js"></script>
+  <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1371,6 +1371,9 @@ function renderError(msg) {
 // ============================================================
 async function main() {
   try {
+    if (typeof liff === "undefined") {
+      throw new Error("กรุณาเปิดผ่าน LINE app ครับ");
+    }
     await liff.init({ liffId: LIFF_ID });
 
     if (!liff.isLoggedIn()) {
@@ -1398,7 +1401,7 @@ async function main() {
   }
 }
 
-main();
+window.onload = main;
 </script>
 </body>
 </html>

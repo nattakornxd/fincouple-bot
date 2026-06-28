@@ -14,6 +14,8 @@ import os
 import random
 import string
 from contextlib import asynccontextmanager
+import time
+from threading import Lock
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from typing import Any
@@ -153,6 +155,28 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Idempotency cache — ป้องกัน LINE Webhook Retry ทำให้บันทึกซ้ำ
+# ---------------------------------------------------------------------------
+_event_cache: dict[str, float] = {}
+_event_cache_lock = Lock()
+_EVENT_TTL_SECS: float = 300.0  # 5 นาที (LINE retry ภายใน ~30 วินาที)
+
+
+def _is_already_processed(event_id: str) -> bool:
+    """คืน True ถ้า webhook event นี้เคย handle ไปแล้ว (LINE retry dedup)."""
+    now = time.time()
+    with _event_cache_lock:
+        # ลบ entry ที่หมดอายุ
+        expired = [k for k, v in _event_cache.items() if now - v > _EVENT_TTL_SECS]
+        for k in expired:
+            del _event_cache[k]
+        if event_id in _event_cache:
+            return True
+        _event_cache[event_id] = now
+        return False
 
 
 # ===========================================================================
@@ -1910,6 +1934,12 @@ async def webhook(
             continue
         if not isinstance(event.message, TextMessageContent):
             continue
+        # ── Idempotency: ป้องกัน LINE Webhook Retry บันทึกซ้ำ ──────────────
+        event_id = getattr(event, "webhook_event_id", None)
+        if event_id and _is_already_processed(event_id):
+            logger.info("Duplicate webhook event skipped: %s", event_id)
+            continue
+        # ─────────────────────────────────────────────────────────────────────
         try:
             reply = await handle_text_event(event)
         except Exception as exc:

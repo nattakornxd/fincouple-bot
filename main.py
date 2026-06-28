@@ -15,6 +15,7 @@ import random
 import string
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Any
 
 import anthropic
@@ -53,6 +54,9 @@ CLAUDE_API_KEY: str = os.environ["CLAUDE_API_KEY"]
 SUPABASE_URL: str = os.environ["SUPABASE_URL"]
 SUPABASE_KEY: str = os.environ["SUPABASE_KEY"]
 LIFF_URL: str = os.getenv("LIFF_URL", "https://liff.line.me/2010520479-6TrRjatU")
+
+# Timezone
+_BKK = ZoneInfo("Asia/Bangkok")
 
 # ---------------------------------------------------------------------------
 # System Prompt for Claude
@@ -312,8 +316,8 @@ async def delete_last_transaction(group_id: str) -> dict[str, Any] | None:
 
 async def delete_current_month_transactions(group_id: str) -> int:
     """ลบธุรกรรมทั้งหมดในเดือนปัจจุบัน — คืนจำนวนรายการที่ลบ"""
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    now_bkk = datetime.now(_BKK)
+    month_start = now_bkk.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
     result = (
         supabase.table("transactions")
         .select("id")
@@ -326,17 +330,38 @@ async def delete_current_month_transactions(group_id: str) -> int:
         supabase.table("transactions").delete().eq("group_id", group_id).gte("created_at", month_start).execute()
     return count
 
-async def get_monthly_summary(group_id: str) -> dict[str, Any]:
-    """Query current month transactions + budgets and return summary dict."""
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+async def get_monthly_summary(group_id: str, month_offset: int = 0) -> dict[str, Any]:
+    """Query transactions + budgets for a given month (month_offset=0 current, -1 last month)."""
+    _THAI_MONTHS = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+                    "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
+    now_bkk = datetime.now(_BKK)
 
-    # Transactions this month
+    # Calculate target month in BKK time
+    target_month = now_bkk.month + month_offset
+    target_year = now_bkk.year
+    while target_month <= 0:
+        target_month += 12
+        target_year -= 1
+
+    month_start_bkk = now_bkk.replace(year=target_year, month=target_month, day=1,
+                                       hour=0, minute=0, second=0, microsecond=0)
+    next_m = target_month + 1
+    next_y = target_year
+    if next_m > 12:
+        next_m = 1
+        next_y += 1
+    month_end_bkk = month_start_bkk.replace(year=next_y, month=next_m, day=1)
+
+    month_start = month_start_bkk.astimezone(timezone.utc).isoformat()
+    month_end = month_end_bkk.astimezone(timezone.utc).isoformat()
+
+    # Transactions in range
     tx_result = (
         supabase.table("transactions")
         .select("type, amount, category, memo, created_at")
         .eq("group_id", group_id)
         .gte("created_at", month_start)
+        .lt("created_at", month_end)
         .order("created_at", desc=True)
         .execute()
     )
@@ -368,8 +393,12 @@ async def get_monthly_summary(group_id: str) -> dict[str, Any]:
         else:
             total_income += amt
 
+    thai_month = _THAI_MONTHS[target_month]
+    buddhist_year = target_year + 543
+    month_label = f"{thai_month} {buddhist_year}"
+
     return {
-        "month": now.strftime("%B %Y"),
+        "month": month_label,
         "total_income": total_income,
         "total_expense": total_expense,
         "balance": total_income - total_expense,
@@ -377,6 +406,67 @@ async def get_monthly_summary(group_id: str) -> dict[str, Any]:
         "budgets": budgets,
         "recent_transactions": transactions[:20],
     }
+
+
+
+async def check_budget_alert(group_id: str, category: str) -> dict | None:
+    """คืน alert dict ถ้าใช้งบ >= 80% ของเดือนนี้, None ถ้าไม่มีงบหรือยังไม่ถึง threshold"""
+    now_bkk = datetime.now(_BKK)
+    month_start = now_bkk.replace(day=1, hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+
+    budget_row = (
+        supabase.table("budgets")
+        .select("amount")
+        .eq("group_id", group_id)
+        .eq("category", category)
+        .eq("period", "monthly")
+        .maybe_single()
+        .execute()
+    )
+    if not budget_row.data:
+        return None
+
+    budget_amount = float(budget_row.data["amount"])
+    if budget_amount <= 0:
+        return None
+
+    spent_rows = (
+        supabase.table("transactions")
+        .select("amount")
+        .eq("group_id", group_id)
+        .eq("type", "expense")
+        .eq("category", category)
+        .gte("created_at", month_start)
+        .execute()
+    )
+    spent = sum(float(r["amount"]) for r in (spent_rows.data or []))
+    pct = spent / budget_amount
+
+    if pct < 0.8:
+        return None
+
+    return {"spent": spent, "budget": budget_amount, "pct": pct}
+
+
+async def update_last_transaction_amount(group_id: str, new_amount: float) -> dict | None:
+    """แก้ไขจำนวนเงินรายการล่าสุด — คืน row ที่อัปเดต หรือ None ถ้าไม่มีรายการ"""
+    result = (
+        supabase.table("transactions")
+        .select("id, type, amount, category, memo, created_at")
+        .eq("group_id", group_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        return None
+
+    tx = result.data[0]
+    old_amount = float(tx["amount"])
+    supabase.table("transactions").update({"amount": new_amount}).eq("id", tx["id"]).execute()
+    tx["old_amount"] = old_amount
+    tx["amount"] = new_amount
+    return tx
 
 
 # ===========================================================================
@@ -515,7 +605,62 @@ def _build_category_row(cat: str, spent: float, budget: float | None) -> dict:
     return row
 
 
-def build_expense_flex(amount: float, category: str, memo: str | None) -> dict:
+def build_edit_flex(tx: dict) -> dict:
+    """Flex Message สำหรับ /แก้ไข — แสดงยอดเดิมและยอดใหม่"""
+    old_amount = float(tx.get("old_amount", 0))
+    new_amount = float(tx["amount"])
+    tx_type = tx.get("type", "expense")
+    type_color = _C_EXPENSE if tx_type == "expense" else _C_INCOME
+    cat = tx.get("category", "other")
+    emoji = CATEGORY_EMOJI.get(cat, "📝")
+    cat_th = _CAT_TH.get(cat, cat)
+    type_label = "รายจ่าย" if tx_type == "expense" else "รายรับ"
+
+    contents = {
+        "type": "bubble", "size": "kilo",
+        "body": {
+            "type": "box", "layout": "vertical", "paddingAll": "0px",
+            "contents": [
+                {
+                    "type": "box", "layout": "vertical",
+                    "backgroundColor": "#1C1917",
+                    "paddingTop": "14px", "paddingBottom": "10px",
+                    "paddingStart": "16px", "paddingEnd": "16px",
+                    "contents": [
+                        {"type": "text", "text": "✏️ แก้ไขรายการแล้วครับ",
+                         "size": "sm", "color": "#FFFFFF", "weight": "bold"},
+                    ],
+                },
+                {"type": "box", "layout": "horizontal", "height": "2px",
+                 "backgroundColor": _C_MINT, "contents": []},
+                {
+                    "type": "box", "layout": "vertical", "backgroundColor": _C_BG_PRIMARY,
+                    "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {"type": "box", "layout": "horizontal", "contents": [
+                            {"type": "text", "text": "ยอดเดิม", "size": "sm",
+                             "color": _C_MINT_DIM, "flex": 3},
+                            {"type": "text", "text": f"฿{old_amount:,.2f}", "size": "sm",
+                             "color": _C_MINT_DIM, "flex": 4, "decoration": "line-through", "align": "end"},
+                        ]},
+                        {"type": "box", "layout": "horizontal", "contents": [
+                            {"type": "text", "text": "ยอดใหม่", "size": "md",
+                             "color": _C_MINT_WHITE, "weight": "bold", "flex": 3},
+                            {"type": "text", "text": f"฿{new_amount:,.2f}", "size": "md",
+                             "color": type_color, "weight": "bold", "flex": 4, "align": "end"},
+                        ]},
+                        {"type": "separator", "margin": "sm", "color": _C_BG_SECONDARY},
+                        {"type": "text", "text": f"{emoji}  {cat_th}  ·  {type_label}",
+                         "size": "xs", "color": _C_MINT_DIM, "margin": "sm"},
+                    ],
+                },
+            ],
+        },
+    }
+    return {"alt_text": f"แก้ไขรายการเป็น ฿{new_amount:,.0f}", "contents": contents}
+
+
+def build_expense_flex(amount: float, category: str, memo: str | None, alert_data: dict | None = None) -> dict:
     emoji = CATEGORY_EMOJI.get(category, "📝")
     cat_th = _CAT_TH.get(category, category)
     body_contents: list = [
@@ -533,6 +678,31 @@ def build_expense_flex(amount: float, category: str, memo: str | None) -> dict:
             "contents": [{"type": "text", "text": f"{emoji}  {cat_th}", "size": "xs", "color": _C_MINT}],
         }],
     })
+    # Budget alert box (append to body_contents if needed)
+    if alert_data:
+        pct = alert_data["pct"]
+        spent = alert_data["spent"]
+        budget = alert_data["budget"]
+        remaining = budget - spent
+        if pct >= 1.0:
+            alert_icon = "🚨"
+            alert_text = f"ใช้งบเกินแล้ว! ใช้ไป ฿{spent:,.0f} / ฿{budget:,.0f}"
+            alert_color = _C_EXPENSE
+        else:
+            alert_icon = "⚠️"
+            alert_text = f"ใช้งบไปแล้ว {pct*100:.0f}% — เหลือ ฿{remaining:,.0f}"
+            alert_color = _C_AMBER
+        body_contents.append({
+            "type": "box", "layout": "horizontal",
+            "backgroundColor": "#1C0A00", "cornerRadius": "6px",
+            "paddingAll": "8px", "margin": "md",
+            "contents": [
+                {"type": "text", "text": alert_icon, "size": "sm", "flex": 0},
+                {"type": "text", "text": alert_text, "size": "xxs",
+                 "color": alert_color, "flex": 1, "margin": "sm", "wrap": True},
+            ],
+        })
+
     contents = {
         "type": "bubble", "size": "kilo",
         "body": {
@@ -1215,6 +1385,41 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
         cat_th = _CAT_TH.get(matched_cat, matched_cat)
         return build_delete_budget_flex(matched_cat, cat_th, emoji)
 
+    # -----------------------------------------------------------------------
+    # COMMAND: /แก้ไข <จำนวน> — แก้ไขยอดรายการล่าสุด
+    # -----------------------------------------------------------------------
+    if lower_text.startswith("/แก้ไข") or lower_text.startswith("แก้ไข"):
+        if not group_id:
+            return build_no_group_flex()
+        raw_num = lower_text.replace("/แก้ไข", "").replace("แก้ไข", "").strip().replace(",", "")
+        try:
+            new_amount = float(raw_num)
+            if new_amount <= 0:
+                raise ValueError
+        except ValueError:
+            return "❓ ระบุจำนวนเงินที่ต้องการแก้ไขครับ\nตัวอย่าง: /แก้ไข 500"
+        try:
+            updated = await update_last_transaction_amount(group_id, new_amount)
+        except Exception as exc:
+            logger.error("Update transaction error: %s", exc)
+            return "⚠️ แก้ไขรายการไม่สำเร็จ กรุณาลองใหม่ครับ"
+        if not updated:
+            return "📭 ยังไม่มีรายการในระบบครับ"
+        return build_edit_flex(updated)
+
+    # -----------------------------------------------------------------------
+    # COMMAND: /สรุปเดือนที่แล้ว — สรุปยอดเดือนก่อน
+    # -----------------------------------------------------------------------
+    if lower_text in ("/สรุปเดือนที่แล้ว", "สรุปเดือนที่แล้ว", "/เดือนที่แล้ว", "เดือนที่แล้ว"):
+        if not group_id:
+            return build_no_group_flex()
+        try:
+            summary = await get_monthly_summary(group_id, month_offset=-1)
+        except Exception as exc:
+            logger.error("Last month summary error: %s", exc)
+            return "⚠️ ดึงข้อมูลเดือนที่แล้วไม่ได้ กรุณาลองใหม่ครับ"
+        return build_summary_flex(summary)
+
     # COMMAND: /ลบล่าสุด — ลบรายการล่าสุดของกลุ่ม
     # -----------------------------------------------------------------------
     if lower_text in ("/ลบล่าสุด", "/undo", "ลบล่าสุด"):
@@ -1237,8 +1442,9 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
     if lower_text in ("/ล้างเดือน", "/clearmonth", "ล้างเดือน"):
         if not group_id:
             return build_no_group_flex()
-        now = datetime.now(timezone.utc)
-        month_name = now.strftime("%B %Y")
+        _TH_M = ["","มกราคม","กุมภาพันธ์","มีนาคม","เมษายน","พฤษภาคม","มิถุนายน","กรกฎาคม","สิงหาคม","กันยายน","ตุลาคม","พฤศจิกายน","ธันวาคม"]
+        now_bkk = datetime.now(_BKK)
+        month_name = f"{_TH_M[now_bkk.month]} {now_bkk.year + 543}"
         try:
             count = await delete_current_month_transactions(group_id)
         except Exception as exc:
@@ -1293,11 +1499,14 @@ async def handle_text_event(event: MessageEvent) -> str | dict:
             logger.error("Supabase insert error: %s", exc)
             return "⚠️ บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้งนะครับ"
 
-        return (
-            build_expense_flex(amount, category, memo)
-            if tx_type == "expense"
-            else build_income_flex(amount, category, memo)
-        )
+        if tx_type == "expense":
+            try:
+                alert_data = await check_budget_alert(group_id, category)
+            except Exception:
+                alert_data = None
+            return build_expense_flex(amount, category, memo, alert_data)
+        else:
+            return build_income_flex(amount, category, memo)
 
     # -----------------------------------------------------------------------
     # INTENT: set_budget — ตั้งงบประมาณ

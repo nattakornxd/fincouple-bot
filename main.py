@@ -586,13 +586,13 @@ def _build_category_row(cat: str, spent: float, budget: float | None) -> dict:
         amount_color = _C_EXPENSE if overspent else (_C_AMBER if pct > 80 else _C_MINT)
         filled_flex = max(pct, 1)
         empty_flex = 100 - filled_flex
-        amount_label = f"฿{spent:,.0f} / ฿{budget:,.0f}  {pct}%"
+        amount_label = f"฿{spent:,.2f} / ฿{budget:,.2f}  {pct}%"
     else:
         bar_color = _C_EMERALD
         amount_color = _C_MINT
         filled_flex = 0
         empty_flex = 100
-        amount_label = f"฿{spent:,.0f}"
+        amount_label = f"฿{spent:,.2f}"
 
     row: dict = {
         "type": "box",
@@ -892,7 +892,7 @@ def build_delete_flex(deleted: dict) -> dict:
                             "type": "box", "layout": "horizontal", "margin": "sm",
                             "contents": [
                                 {"type": "text", "text": tx_type_label, "size": "sm", "color": type_color, "flex": 1},
-                                {"type": "text", "text": f"฿{amount:,.0f}", "size": "lg", "color": type_color, "weight": "bold", "align": "end"},
+                                {"type": "text", "text": f"฿{amount:,.2f}", "size": "lg", "color": type_color, "weight": "bold", "align": "end"},
                             ],
                         },
                     ],
@@ -1230,7 +1230,7 @@ def build_summary_flex(summary: dict[str, Any]) -> dict:
                             "contents": [
                                 {"type": "text", "text": "💚 รายรับ", "size": "xs",
                                  "color": _C_INCOME, "weight": "bold"},
-                                {"type": "text", "text": f"฿{total_income:,.0f}",
+                                {"type": "text", "text": f"฿{total_income:,.2f}",
                                  "size": "lg", "color": _C_WHITE, "weight": "bold", "margin": "sm"},
                             ],
                         },
@@ -1241,7 +1241,7 @@ def build_summary_flex(summary: dict[str, Any]) -> dict:
                             "contents": [
                                 {"type": "text", "text": "❤️ รายจ่าย", "size": "xs",
                                  "color": _C_EXPENSE, "weight": "bold"},
-                                {"type": "text", "text": f"฿{total_expense:,.0f}",
+                                {"type": "text", "text": f"฿{total_expense:,.2f}",
                                  "size": "lg", "color": _C_WHITE, "weight": "bold", "margin": "sm"},
                             ],
                         },
@@ -1252,7 +1252,7 @@ def build_summary_flex(summary: dict[str, Any]) -> dict:
                             "contents": [
                                 {"type": "text", "text": "✨ คงเหลือ", "size": "xs",
                                  "color": _C_AMBER, "weight": "bold"},
-                                {"type": "text", "text": f"฿{balance:,.0f}",
+                                {"type": "text", "text": f"฿{balance:,.2f}",
                                  "size": "lg", "color": balance_color, "weight": "bold", "margin": "sm"},
                             ],
                         },
